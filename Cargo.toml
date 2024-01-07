@@ -1,0 +1,8 @@
+[package]
+name = "compiler-book"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+indoc = "2.0.4"
+logos = "0.13.0"
