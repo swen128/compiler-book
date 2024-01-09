@@ -1,16 +1,24 @@
 use super::document::Span;
 
-pub struct Program(ExprNode);
+pub struct Program(NExpr);
 
 #[derive(Debug, Clone)]
-pub struct ExprNode {
-    expr: Expr,
+pub struct Node<T> {
+    node: Result<T, InvalidNode>,
     span: Span,
 }
 
 #[derive(Debug, Clone)]
+pub struct InvalidNode {
+    content: String,
+    span: Span,
+}
+
+pub type NExpr = Node<Expr>;
+
+#[derive(Debug, Clone)]
 pub enum Expr {
-    Seq(Vec<ExprNode>),
+    Seq(Vec<NExpr>),
 
     /// An open parenthesis followed immediately by a close parenthesis
     NoValue,
@@ -22,10 +30,10 @@ pub enum Expr {
     Record(Record),
 
     /// An integer-valued expression prefixed by the unary minus operator
-    Neg(Box<ExprNode>),
+    Neg(Box<NExpr>),
     /// A binary operator applied to two expressions
-    BiOp(BiOpNode, Box<ExprNode>, Box<ExprNode>),
-    FuncCall(IdNode, Vec<ExprNode>),
+    BiOp(NBiOP, Box<NExpr>, Box<NExpr>),
+    FuncCall(IdNode, Vec<NExpr>),
 
     If(If),
     While(While),
@@ -38,15 +46,11 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum LValue {
     Id(IdNode),
-    RecordField(Box<ExprNode>, IdNode),
-    ArrayIndex(Box<ExprNode>, Box<ExprNode>),
+    RecordField(Box<NExpr>, IdNode),
+    ArrayIndex(Box<NExpr>, Box<NExpr>),
 }
 
-#[derive(Debug, Clone)]
-pub struct BiOpNode {
-    op: BiOp,
-    span: Span,
-}
+pub type NBiOP = Node<BiOp>;
 
 #[derive(Debug, Clone)]
 pub enum BiOp {
@@ -72,7 +76,7 @@ pub enum BiOp {
 #[derive(Debug, Clone)]
 pub struct Let {
     decs: Vec<DecNode>,
-    exps: Vec<ExprNode>,
+    exps: Vec<NExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +103,7 @@ pub struct FnDec {
     id: IdNode,
     params: Vec<TyFieldNode>,
     ret_ty: Option<IdNode>,
-    body: Box<ExprNode>,
+    body: Box<NExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +130,7 @@ pub struct TyFieldNode {
 pub struct VarDec {
     id: IdNode,
     ty: Option<TyNode>,
-    expr: ExprNode,
+    expr: NExpr,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +141,7 @@ pub struct IdNode {
 
 #[derive(Debug, Clone)]
 pub struct If {
-    cond: Box<ExprNode>,
-    then: Box<ExprNode>,
-    else_: Option<Box<ExprNode>>,
+    cond: Box<NExpr>,
+    then: Box<NExpr>,
+    else_: Option<Box<NExpr>>,
 }
