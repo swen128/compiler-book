@@ -1,16 +1,18 @@
 //! The lexer is responsible for splitting the source code into a sequence of 'token's,
 //! which are smallest meaningful units of the language.
-//! 
+//!
 //! The grammer of token is described by regular expressions.
-//! More complex syntaxes are handled by the later parsing 
+//! More complex syntaxes are handled by the later parsing
 
 use logos::{Lexer, Logos};
 
 use crate::mylang::document::Span;
 
-#[derive(Logos, Debug, PartialEq)]
+use super::document::Spanned;
+
+#[derive(Logos, Debug, PartialEq, Eq, Clone, Hash)]
 #[logos(skip r"\s+")]
-pub enum TokenKind<'src> {
+pub enum Token<'src> {
     #[token("(")]
     LParen,
     #[token(")")]
@@ -59,18 +61,30 @@ pub enum TokenKind<'src> {
     Var,
     #[token("in")]
     In,
-    #[token("begin")]
-    Begin,
     #[token("end")]
     End,
+    #[token("while")]
+    While,
+    #[token("for")]
+    For,
+    #[token("to")]
+    To,
+    #[token("do")]
+    Do,
+    #[token("break")]
+    Break,
+    #[token("array")]
+    Array,
+    #[token("of")]
+    Of,
     #[token("print")]
     Print,
 
     #[regex(r"true|false", parse_bool)]
     Bool(bool),
 
-    #[regex(r"-?[0-9]+", parse_num, priority = 2)]
-    Num(i64),
+    #[regex(r"[0-9]+", parse_num, priority = 2)]
+    Num(u64),
 
     // An identifier.
     //
@@ -82,59 +96,26 @@ pub enum TokenKind<'src> {
     #[regex(r#""(?:[^"]|\\")*""#, parse_str_literal)]
     String(&'src str),
 
-    // An invalid token.
-    //
-    // When the lexer encouters an invalid token, it skips until next special character,
-    // and then continues tokenizing the rest of text.
-    #[regex(r"[^\s\(\){}\[\],:;=+*\-]+", priority = 1)]
-    Invalid(&'src str),
-}
-
-#[derive(PartialEq)]
-pub struct Token<'src> {
-    pub token: TokenKind<'src>,
-    /// The position of the token in the source code.
-    pub span: Span,
-}
-
-impl Token<'_> {
-    fn new(token: TokenKind, start: usize, end: usize) -> Token {
-        Token {
-            token,
-            span: Span::new(start, end),
-        }
-    }
-
-    pub fn is_invalid(&self) -> bool {
-        if let TokenKind::Invalid(_) = self.token {
-            true
-        } else {
-            false
-        }
-    }
+    Invalid,
 }
 
 /// Takes source code of the program and split it into sequence of tokens.
-pub fn tokenize(src: &str) -> Vec<Token> {
-    let results = TokenKind::lexer(src).spanned();
+pub fn tokenize(src: &str) -> Vec<Spanned<Token>> {
+    let results = Token::lexer(src).spanned();
 
     results
         .map(|(result, span)| match result {
-            Ok(token) => Token {
-                token,
-                span: Span::from(span),
-            },
-
-            Err(_) => panic!("Tokenization error"),
+            Ok(token) => Spanned::new(token, Span::from(span)),
+            Err(_) => Spanned::new(Token::Invalid, Span::from(span)),
         })
         .collect()
 }
 
-fn parse_num<'src>(lex: &Lexer<'src, TokenKind<'src>>) -> i64 {
+fn parse_num<'src>(lex: &Lexer<'src, Token<'src>>) -> u64 {
     lex.slice().parse().unwrap()
 }
 
-fn parse_bool<'src>(lex: &Lexer<'src, TokenKind<'src>>) -> bool {
+fn parse_bool<'src>(lex: &Lexer<'src, Token<'src>>) -> bool {
     match lex.slice() {
         "true" => true,
         "false" => false,
@@ -142,19 +123,14 @@ fn parse_bool<'src>(lex: &Lexer<'src, TokenKind<'src>>) -> bool {
     }
 }
 
-fn parse_str_literal<'src>(lex: &Lexer<'src, TokenKind<'src>>) -> &'src str {
+fn parse_str_literal<'src>(lex: &Lexer<'src, Token<'src>>) -> &'src str {
     // Strip the surrounding quotes.
     &lex.slice()[1..lex.slice().len() - 1]
 }
 
-impl std::fmt::Debug for Token<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok({
-            f.write_fmt(format_args!(
-                "Token {{{:?} at {}..{}}}",
-                self.token, self.span.start, self.span.end
-            ))?;
-        })
+impl From<logos::Span> for Span {
+    fn from(span: logos::Span) -> Span {
+        Span::new(span.start, span.end)
     }
 }
 
@@ -183,7 +159,7 @@ mod tests {
     fn left_paren() {
         let src = "(";
         let tokens = tokenize(src);
-        let expected = vec![Token::new(TokenKind::LParen, 0, 1)];
+        let expected = vec![token(Token::LParen, 0, 1)];
         assert_eq!(tokens, expected);
     }
 
@@ -191,7 +167,7 @@ mod tests {
     fn single_char_with_whitespace() {
         let src = " ( \n\t";
         let tokens = tokenize(src);
-        let expected = vec![Token::new(TokenKind::LParen, 1, 2)];
+        let expected = vec![token(Token::LParen, 1, 2)];
         assert_eq!(tokens, expected);
     }
 
@@ -200,11 +176,11 @@ mod tests {
         let src = "(8 + 2)";
         let tokens = tokenize(src);
         let expected = vec![
-            Token::new(TokenKind::LParen, 0, 1),
-            Token::new(TokenKind::Num(8), 1, 2),
-            Token::new(TokenKind::Plus, 3, 4),
-            Token::new(TokenKind::Num(2), 5, 6),
-            Token::new(TokenKind::RParen, 6, 7),
+            token(Token::LParen, 0, 1),
+            token(Token::Num(8), 1, 2),
+            token(Token::Plus, 3, 4),
+            token(Token::Num(2), 5, 6),
+            token(Token::RParen, 6, 7),
         ];
         assert_eq!(tokens, expected);
     }
@@ -214,9 +190,33 @@ mod tests {
         let src = "-8 - -2";
         let tokens = tokenize(src);
         let expected = vec![
-            Token::new(TokenKind::Num(-8), 0, 2),
-            Token::new(TokenKind::Minus, 3, 4),
-            Token::new(TokenKind::Num(-2), 5, 7),
+            token(Token::Minus, 0, 1),
+            token(Token::Num(8), 1, 2),
+            token(Token::Minus, 3, 4),
+            token(Token::Minus, 5, 6),
+            token(Token::Num(2), 6, 7),
+        ];
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn for_loop() {
+        let src = indoc! {r#"
+            for i := 0 to 10 do
+                x
+            end
+        "#};
+        let tokens = tokenize(src);
+        let expected = vec![
+            token(Token::For, 0, 3),
+            token(Token::Id("i"), 4, 5),
+            token(Token::ColonEq, 6, 8),
+            token(Token::Num(0), 9, 10),
+            token(Token::To, 11, 13),
+            token(Token::Num(10), 14, 16),
+            token(Token::Do, 17, 19),
+            token(Token::Id("x"), 24, 25),
+            token(Token::End, 26, 29),
         ];
         assert_eq!(tokens, expected);
     }
@@ -231,14 +231,14 @@ mod tests {
         "#};
         let tokens = tokenize(src);
         let expected = vec![
-            Token::new(TokenKind::Let, 0, 3),
-            Token::new(TokenKind::Var, 8, 11),
-            Token::new(TokenKind::Id("N"), 12, 13),
-            Token::new(TokenKind::ColonEq, 14, 16),
-            Token::new(TokenKind::Num(8), 17, 18),
-            Token::new(TokenKind::In, 23, 25),
-            Token::new(TokenKind::Id("N"), 26, 27),
-            Token::new(TokenKind::End, 28, 31),
+            token(Token::Let, 0, 3),
+            token(Token::Var, 8, 11),
+            token(Token::Id("N"), 12, 13),
+            token(Token::ColonEq, 14, 16),
+            token(Token::Num(8), 17, 18),
+            token(Token::In, 23, 25),
+            token(Token::Id("N"), 26, 27),
+            token(Token::End, 28, 31),
         ];
         assert_eq!(tokens, expected);
     }
@@ -248,13 +248,19 @@ mod tests {
         let src = "val N1 :a= 829zd9d";
         let tokens = tokenize(src);
         let expected = vec![
-            Token::new(TokenKind::Id("val"), 0, 3),
-            Token::new(TokenKind::Id("N1"), 4, 6),
-            Token::new(TokenKind::Colon, 7, 8),
-            Token::new(TokenKind::Id("a"), 8, 9),
-            Token::new(TokenKind::Eq, 9, 10),
-            Token::new(TokenKind::Invalid("829zd9d"), 11, 18),
+            token(Token::Id("val"), 0, 3),
+            token(Token::Id("N1"), 4, 6),
+            token(Token::Colon, 7, 8),
+            token(Token::Id("a"), 8, 9),
+            token(Token::Eq, 9, 10),
+            token(Token::Num(829), 11, 14),
+            token(Token::Id("zd9d"), 14, 18),
         ];
         assert_eq!(tokens, expected);
+    }
+
+    /// A helper function to create a [Spanned<Token>] instance.
+    fn token(kind: Token, start: usize, end: usize) -> Spanned<Token> {
+        Spanned::new(kind, Span::new(start, end))
     }
 }
