@@ -4,6 +4,8 @@
 //! The grammer of token is described by regular expressions.
 //! More complex syntaxes are handled by the later parsing
 
+use std::fmt::Display;
+
 use logos::{Lexer, Logos};
 
 use crate::mylang::document::Span;
@@ -28,21 +30,44 @@ pub enum Token<'src> {
 
     #[token(",")]
     Comma,
+    #[token(".")]
+    Dot,
     #[token(":")]
     Colon,
     #[token(";")]
     Semicolon,
-    #[token("=")]
-    Eq,
     #[token(":=")]
     ColonEq,
 
+    // Comparison operators
+    #[token("=")]
+    Eq,
+    #[token("<>")]
+    Neq,
+    #[token("<=")]
+    Le,
+    #[token("<")]
+    Lt,
+    #[token(">=")]
+    Ge,
+    #[token(">")]
+    Gt,
+
+    // Arithmetic operators
     #[token("+")]
     Plus,
-    #[token("*")]
-    Times,
     #[token("-")]
     Minus,
+    #[token("*")]
+    Times,
+    #[token("/")]
+    Div,
+
+    // Boolean operators
+    #[token("&")]
+    And,
+    #[token("|")]
+    Or,
 
     // Reserved keywords
     #[token("type")]
@@ -77,11 +102,6 @@ pub enum Token<'src> {
     Array,
     #[token("of")]
     Of,
-    #[token("print")]
-    Print,
-
-    #[regex(r"true|false", parse_bool)]
-    Bool(bool),
 
     #[regex(r"[0-9]+", parse_num, priority = 2)]
     Num(u64),
@@ -89,7 +109,10 @@ pub enum Token<'src> {
     // An identifier.
     //
     // The first character must not be numeric or a special character.
-    #[regex(r"[^\s\(\){}\[\],:;=+*=\-0-9][^\s\(\){}\[\],:;=+*\-]*", priority = 2)]
+    #[regex(
+        r"[^\s\(\){}\[\],\.:;=\+\*/=\-<>&\|0-9][^\s\(\){}\[\],\.:;=\+\*/\-<>&\|]*",
+        priority = 2
+    )]
     Id(&'src str),
 
     // A string literal surrounded by double quotes.
@@ -97,6 +120,66 @@ pub enum Token<'src> {
     String(&'src str),
 
     Invalid,
+}
+
+impl Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            Self::LParen => "(",
+            Self::RParen => ")",
+            Self::LBrace => "{",
+            Self::RBrace => "}",
+            Self::LBracket => "[",
+            Self::RBracket => "]",
+
+            Self::Comma => ",",
+            Self::Dot => ".",
+            Self::Colon => ":",
+            Self::Semicolon => ";",
+            Self::ColonEq => ":=",
+
+            Self::Eq => "=",
+            Self::Neq => "<>",
+            Self::Le => "<=",
+            Self::Lt => "<",
+            Self::Ge => ">=",
+            Self::Gt => ">",
+
+            Self::Plus => "+",
+            Self::Minus => "-",
+            Self::Times => "*",
+            Self::Div => "/",
+
+            Self::And => "&",
+            Self::Or => "|",
+
+            Self::Type => "type",
+            Self::Fn => "function",
+            Self::If => "if",
+            Self::Then => "then",
+            Self::Else => "else",
+            Self::Let => "let",
+            Self::Var => "var",
+            Self::In => "in",
+            Self::End => "end",
+            Self::While => "while",
+            Self::For => "for",
+            Self::To => "to",
+            Self::Do => "do",
+            Self::Break => "break",
+            Self::Array => "array",
+            Self::Of => "of",
+
+            Self::Num(n) => return write!(f, "{}", n),
+
+            Self::Id(id) => id,
+
+            Self::String(s) => s,
+
+            Self::Invalid => "Invalid",
+        };
+        write!(f, "{}", str)
+    }
 }
 
 /// Takes source code of the program and split it into sequence of tokens.
@@ -113,14 +196,6 @@ pub fn tokenize(src: &str) -> Vec<Spanned<Token>> {
 
 fn parse_num<'src>(lex: &Lexer<'src, Token<'src>>) -> u64 {
     lex.slice().parse().unwrap()
-}
-
-fn parse_bool<'src>(lex: &Lexer<'src, Token<'src>>) -> bool {
-    match lex.slice() {
-        "true" => true,
-        "false" => false,
-        _ => panic!("Invalid boolean literal"),
-    }
 }
 
 fn parse_str_literal<'src>(lex: &Lexer<'src, Token<'src>>) -> &'src str {

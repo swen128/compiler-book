@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chumsky = "0.9.3"
 indoc = "2.0.4"
 logos = "0.13.0"

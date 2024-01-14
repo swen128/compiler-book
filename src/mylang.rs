@@ -1,7 +1,12 @@
-pub mod ast;
-pub mod document;
-pub mod lexer;
+pub use document::{Position, Span, Spanned};
+pub use parser::ParseError;
 
-pub fn parse(source: &str) -> Result<ast::Program, ()> {
-    todo!()
+pub mod ast;
+mod document;
+mod lexer;
+mod parser;
+
+pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
+    let tokens = lexer::tokenize(source);
+    parser::parse(tokens)
 }

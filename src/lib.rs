@@ -1,8 +1,7 @@
 mod mylang;
 
-pub use mylang::parse;
-pub use mylang::document::Position;
+pub use mylang::*;
 
-pub fn compile(source: &str) -> Result<String, ()> {
+pub fn compile(_source: &str) -> Result<String, ()> {
     todo!()
 }

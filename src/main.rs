@@ -1,12 +1,11 @@
 use std::io::Read;
 
-use compiler_book::compile;
+use compiler_book::parse;
 
-/// Reads source code from stdin and prints the compiled assembly to stdout.
 fn main() {
-    let mut source = String::new();
-    std::io::stdin().read_to_string(&mut source).unwrap();
+    let mut src = String::new();
+    std::io::stdin().read_to_string(&mut src).unwrap();
 
-    let program = compile(&source).unwrap();
-    println!("{}", program);
+    println!("{}", src);
+    println!("{:?}", parse(&src));
 }
