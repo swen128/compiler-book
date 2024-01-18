@@ -82,7 +82,6 @@ fn parse_accepts_string_literal() {
     assert_eq!(output, expected);
 }
 
-// TODO: This is somehow very slow to parse.
 #[test]
 fn complex() {
     let input = r#"for j := 0 to N-1 do print(if col[i]=j then " O" else " .")"#;
@@ -136,65 +135,34 @@ fn complex() {
     assert_eq!(output, expected);
 }
 
-// // And this takes ages.
-// #[test]
-// fn parse_accepts_complex_program() {
-//     let input = r###"
-//         let
-//             var N := 8
-//
-//             type intArray = array of int
-//
-//             var row := intArray [N] of 0
-//             var col := intArray [N] of 0
-//             var diag1 := intArray [N+N-1] of 0
-//             var diag2 := intArray [N+N-1] of 0
-//
-//             function printboard() = (
-//                 for i := 0 to N-1 do (
-//                     for j := 0 to N-1 do print(if col[i]=j then " O" else " .");
-//                     print("\n")
-//                 );
-//                 print("\n")
-//             )
-//         in
-//             try(0)
-//         end
-//     "###;
-//
-//     let output = parse(input);
-//     output.unwrap();
-//
-//     // match output {
-//     //     Ok(_) => {}
-//     //     Err(errors) => {
-//     //         for error in errors {
-//     //             let start = convert(input, chumsky::Span::start(&error.span()));
-//     //             let end = convert(input, chumsky::Span::end(&error.span()));
-//     //             println!("start line: {}, col: {}", start.0, start.1);
-//     //             println!("{}", error);
-//     //         }
-//     //         panic!();
-//     //     }
-//     // }
-// }
-//
-// fn convert(src: &str, offset: usize) -> (usize, usize) {
-//     let mut line = 0;
-//     let mut col = 0;
-//     for (i, c) in src.chars().enumerate() {
-//         if i == offset {
-//             return (line, col);
-//         }
-//         if c == '\n' {
-//             line += 1;
-//             col = 1;
-//         } else {
-//             col += 1;
-//         }
-//     }
-//     (line, col)
-// }
+#[test]
+fn parse_accepts_complex_program() {
+    let input = r###"
+        let
+            var N := 8
+
+            type intArray = array of int
+
+            var row := intArray [N] of 0
+            var col := intArray [N] of 0
+            var diag1 := intArray [N+N-1] of 0
+            var diag2 := intArray [N+N-1] of 0
+
+            function printboard() = (
+                for i := 0 to N-1 do (
+                    for j := 0 to N-1 do print(if col[i]=j then " O" else " .");
+                    print("\n")
+                );
+                print("\n")
+            )
+        in
+            try(0)
+        end
+    "###;
+
+    let output = parse(input);
+    output.unwrap();
+}
 
 fn spanned<T>(start: usize, end: usize, value: T) -> Spanned<T> {
     Spanned::new(value, Span::new(start, end))

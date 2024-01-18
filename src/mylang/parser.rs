@@ -219,14 +219,15 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
         // Comparison operators do NOT associate, i.e. `a < b < c` is invalid.
         let comparison = arithmetic
             .clone()
-            .then(comparison_operator)
-            .then(arithmetic.clone())
-            .map(|((left, op), right)| {
-                let span = left.span.merge(&right.span);
-                let value = Expr::biop(op, left, right);
-                Spanned::new(value, span)
+            .then(comparison_operator.then(arithmetic).or_not())
+            .map(|(left, right)| match right {
+                None => left,
+                Some((op, right)) => {
+                    let span = left.span.merge(&right.span);
+                    let value = Expr::biop(op, left, right);
+                    Spanned::new(value, span)
+                }
             })
-            .or(arithmetic)
             .labelled("comparison expression")
             .boxed();
 
@@ -235,27 +236,29 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
 
         let and = comparison
             .clone()
-            .then(and_operator)
-            .then(comparison.clone())
-            .map(|((left, op), right)| {
-                let span = left.span.merge(&right.span);
-                let value = Expr::biop(op, left, right);
-                Spanned::new(value, span)
+            .then(and_operator.then(comparison).or_not())
+            .map(|(left, right)| match right {
+                None => left,
+                Some((op, right)) => {
+                    let span = left.span.merge(&right.span);
+                    let value = Expr::biop(op, left, right);
+                    Spanned::new(value, span)
+                }
             })
-            .labelled("and")
-            .or(comparison);
+            .labelled("and");
 
         let or = and
             .clone()
-            .then(or_operator)
-            .then(and.clone())
-            .map(|((left, op), right)| {
-                let span = left.span.merge(&right.span);
-                let value = Expr::biop(op, left, right);
-                Spanned::new(value, span)
+            .then(or_operator.then(and).or_not())
+            .map(|(left, right)| match right {
+                None => left,
+                Some((op, right)) => {
+                    let span = left.span.merge(&right.span);
+                    let value = Expr::biop(op, left, right);
+                    Spanned::new(value, span)
+                }
             })
-            .labelled("or")
-            .or(and);
+            .labelled("or");
 
         or
     })
