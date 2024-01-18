@@ -1,4 +1,5 @@
 use compiler_book::{ast::*, parse, Span, Spanned};
+use pretty_assertions::assert_eq;
 
 #[test]
 fn parse_accepts_assignment() {
@@ -12,7 +13,7 @@ fn parse_accepts_assignment() {
 }
 
 #[test]
-fn parse_handles_operator_precedence() {
+fn parse_handles_arithmetic_operator_precedence() {
     let input = "1 + 2 * 3 - 4 / 5";
     let output = parse(input);
     let expected = Ok(Program(Expr::biop(
@@ -41,6 +42,83 @@ fn parse_handles_operator_precedence() {
                 spanned(14, 15, BiOp::Div),
                 spanned(12, 13, Expr::num(4)),
                 spanned(16, 17, Expr::num(5)),
+            ),
+        ),
+    )));
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn parse_handles_all_operator_precedence() {
+    // Equivalent to `((-1) <> 0) | (((1 + (2 * 3)) - (4 / 5)) = 6) & (7 <= 8))`
+    let input = "-1 <> 0 | 1 + 2 * 3 - 4 / 5 = 6 & 7 <= 8";
+    let output = parse(input);
+    let expected = Ok(Program(Expr::biop(
+        spanned(8, 9, BiOp::Or),
+        spanned(
+            0,
+            7,
+            Expr::biop(
+                spanned(3, 5, BiOp::Neq),
+                spanned(0, 2, Expr::neg(spanned(1, 2, Expr::num(1)))),
+                spanned(6, 7, Expr::num(0)),
+            ),
+        ),
+        spanned(
+            10,
+            40,
+            Expr::biop(
+                spanned(32, 33, BiOp::And),
+                spanned(
+                    10,
+                    31,
+                    Expr::biop(
+                        spanned(28, 29, BiOp::Eq),
+                        spanned(
+                            10,
+                            27,
+                            Expr::biop(
+                                spanned(20, 21, BiOp::Minus),
+                                spanned(
+                                    10,
+                                    19,
+                                    Expr::biop(
+                                        spanned(12, 13, BiOp::Plus),
+                                        spanned(10, 11, Expr::num(1)),
+                                        spanned(
+                                            14,
+                                            19,
+                                            Expr::biop(
+                                                spanned(16, 17, BiOp::Mul),
+                                                spanned(14, 15, Expr::num(2)),
+                                                spanned(18, 19, Expr::num(3)),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                                spanned(
+                                    22,
+                                    27,
+                                    Expr::biop(
+                                        spanned(24, 25, BiOp::Div),
+                                        spanned(22, 23, Expr::num(4)),
+                                        spanned(26, 27, Expr::num(5)),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        spanned(30, 31, Expr::num(6)),
+                    ),
+                ),
+                spanned(
+                    34,
+                    40,
+                    Expr::biop(
+                        spanned(36, 38, BiOp::Le),
+                        spanned(34, 35, Expr::num(7)),
+                        spanned(39, 40, Expr::num(8)),
+                    ),
+                ),
             ),
         ),
     )));
@@ -155,6 +233,22 @@ fn parse_accepts_complex_program() {
                 );
                 print("\n")
             )
+            
+            function try(c:int) =
+                if c=N
+                    then printboard()
+                    else for r := 0 to N-1 do
+                        if row[r]=0 & diag1[r+c]=0 & diag2[r+7-c]=0
+                            then (
+                                row[r]:=1;
+                                diag1[r+c]:=1;
+                                diag2[r+7-c]:=1;
+                                col[c]:=r;
+                                try(c+1);
+                                row[r]:=0;
+                                diag1[r+c]:=0;
+                                diag2[r+7-c]:=0
+                            )
         in
             try(0)
         end
