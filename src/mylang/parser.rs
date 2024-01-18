@@ -236,27 +236,21 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
 
         let and = comparison
             .clone()
-            .then(and_operator.then(comparison).or_not())
-            .map(|(left, right)| match right {
-                None => left,
-                Some((op, right)) => {
-                    let span = left.span.merge(&right.span);
-                    let value = Expr::biop(op, left, right);
-                    Spanned::new(value, span)
-                }
+            .then(and_operator.then(comparison).repeated())
+            .foldl(|left, (op, right)| {
+                let span = left.span.merge(&right.span);
+                let value = Expr::biop(op, left, right);
+                Spanned::new(value, span)
             })
             .labelled("and");
 
         let or = and
             .clone()
-            .then(or_operator.then(and).or_not())
-            .map(|(left, right)| match right {
-                None => left,
-                Some((op, right)) => {
-                    let span = left.span.merge(&right.span);
-                    let value = Expr::biop(op, left, right);
-                    Spanned::new(value, span)
-                }
+            .then(or_operator.then(and).repeated())
+            .foldl(|left, (op, right)| {
+                let span = left.span.merge(&right.span);
+                let value = Expr::biop(op, left, right);
+                Spanned::new(value, span)
             })
             .labelled("or");
 
