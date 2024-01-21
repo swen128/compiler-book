@@ -51,17 +51,75 @@ fn trans_expr(
         ast::Expr::Array(_) => todo!(),
         ast::Expr::Record(_) => todo!(),
         ast::Expr::Assign(_) => todo!(),
-        ast::Expr::Neg(_) => todo!(),
+        ast::Expr::Neg(_) => trans_specific_type_expr(types::Ty::Int, expr, env, id_generator),
         ast::Expr::BiOp(_, _, _) => todo!(),
-        ast::Expr::FuncCall(_, _) => todo!(),
+        ast::Expr::FuncCall(name, args) => trans_func_call(name, args, env, id_generator),
         ast::Expr::If(_) => todo!(),
         ast::Expr::While(_) => todo!(),
         ast::Expr::For(_) => todo!(),
     }
 }
 
+fn trans_func_call(
+    name: Spanned<ast::Id>,
+    args: Vec<Spanned<ast::Expr>>,
+    env: &mut Environment,
+    id_generator: &mut IdGenerator,
+) -> Result<TypedExpr, Vec<SemanticError>> {
+    let (params_ty, return_ty) = env.values.get(&Symbol::from(&name.value)).map_or_else(
+        || {
+            Err(vec![SemanticError::UndefinedFunction {
+                name: Symbol::from(&name.value),
+                span: name.span,
+            }])
+        },
+        |entry| match entry {
+            ValueEntry::Function { params, result } => Ok((params.clone(), result.clone())),
+
+            ValueEntry::Variable(_) => Err(vec![SemanticError::UnexpectedFunction {
+                name: Symbol::from(&name.value),
+                span: name.span,
+            }]),
+        },
+    )?;
+
+    if params_ty.len() != args.len() {
+        // TODO: Even in this case, we can and should continue type-checking the arguments.
+        return Err(vec![SemanticError::WrongNumberOfArguments {
+            expected: params_ty.len(),
+            found: args.len(),
+
+            // TODO: This should instead be the span of all the arguments.
+            //       We cannot infer the span if the `args` is empty, though.
+            //       We should fix the AST to make this possible.
+            span: name.span,
+        }]);
+    }
+
+    let args_ty = args
+        .into_iter()
+        .map(|arg| trans_expr(arg, env, id_generator));
+
+    let (args_ty, errors) = partition(args_ty);
+
+    todo!()
+}
+
+fn partition<T, E>(iter: impl Iterator<Item = Result<T, E>>) -> (Vec<T>, Vec<E>) {
+    iter.fold((vec![], vec![]), |(mut ok, mut err), result| match result {
+        Ok(x) => {
+            ok.push(x);
+            (ok, err)
+        }
+        Err(e) => {
+            err.push(e);
+            (ok, err)
+        }
+    })
+}
+
 fn trans_specific_type_expr(
-    ty: types::Ty,
+    expected_ty: types::Ty,
     expr: Spanned<ast::Expr>,
     env: &mut Environment,
     id_generator: &mut IdGenerator,
@@ -70,11 +128,14 @@ fn trans_specific_type_expr(
     let result = trans_expr(expr, env, id_generator);
 
     match result {
-        Ok(TypedExpr { ty: found_ty, expr }) if found_ty.is_subtype_of(&ty) => {
-            Ok(TypedExpr { expr, ty })
+        Ok(TypedExpr { ty: found_ty, expr }) if found_ty.is_subtype_of(&expected_ty) => {
+            Ok(TypedExpr {
+                expr,
+                ty: expected_ty,
+            })
         }
         Ok(TypedExpr { ty: found_ty, .. }) => Err(vec![SemanticError::TypeError {
-            expected: ty,
+            expected: expected_ty,
             found: found_ty,
             span,
         }]),
@@ -100,7 +161,10 @@ fn trans_var(
                     expr: intermediate_repr::Expr,
                     ty: ty.clone(),
                 }),
-                _ => Err(vec![SemanticError::UnexpectedFunction]),
+                _ => Err(vec![SemanticError::UnexpectedFunction {
+                    name: Symbol::from(&id),
+                    span,
+                }]),
             },
         ),
 
@@ -189,9 +253,10 @@ fn trans_dec(
         }
 
         ast::Dec::VarDec(ast::VarDec {
-            id: Spanned { span: _, value: id },
+            id: Spanned { value: id, .. },
             ty: declared_ty,
             expr,
+            ..
         }) => {
             let symbol = Symbol::from(&id);
             let declared_ty = declared_ty
@@ -330,15 +395,10 @@ fn trans_type(ty: ast::Ty, env: &TypeTable, id_generator: &mut IdGenerator) -> t
         ast::Ty::Record(fields) => {
             let fields = fields
                 .into_iter()
-                .map(
-                    |Spanned {
-                         span: _,
-                         value: TyField { key, ty },
-                     }| RecordField {
-                        key: Symbol::from(&key.value),
-                        ty: trans_type_name(ty.value, env),
-                    },
-                )
+                .map(|Spanned { value: field, .. }| RecordField {
+                    key: Symbol::from(&field.key.value),
+                    ty: trans_type_name(field.ty.value, env),
+                })
                 .collect();
             types::Ty::Record(id_generator.next(), fields)
         }
@@ -376,8 +436,21 @@ pub enum SemanticError {
     #[error("Undefined variable: {name:?}")]
     UndefinedVariable { name: Symbol, span: Span },
 
-    #[error("Attempted to use a function as a value")]
-    UnexpectedFunction,
+    #[error("Undefined function: {name:?}")]
+    UndefinedFunction { name: Symbol, span: Span },
+
+    #[error("Attempted to use a function '{name:?}' as a variable")]
+    UnexpectedFunction { name: Symbol, span: Span },
+
+    #[error("Attempted to call a variable '{name:?}' as a function")]
+    UnexpectedVariable { name: Symbol, span: Span },
+
+    #[error("Wrong number of arguments: expected {expected:?}, found {found:?}")]
+    WrongNumberOfArguments {
+        expected: usize,
+        found: usize,
+        span: Span,
+    },
 }
 
 impl From<&ast::TypeId> for Symbol {
