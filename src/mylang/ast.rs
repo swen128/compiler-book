@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use super::document::Spanned;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +171,14 @@ type TypeHint = Option<Spanned<TypeId>>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeId(pub String);
 
+impl Deref for TypeId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct If {
     pub cond: Spanned<Expr>,
@@ -179,6 +189,10 @@ pub struct If {
 impl Expr {
     pub fn assign(lhs: Spanned<LValue>, rhs: Spanned<Expr>) -> Self {
         Expr::Assign(Box::new(Assign { lhs, rhs }))
+    }
+    
+    pub fn variable(id: &str) -> Self {
+        Expr::LValue(Box::new(LValue::Variable(Id(id.to_string()))))
     }
 
     pub fn lvalue(lvalue: LValue) -> Self {

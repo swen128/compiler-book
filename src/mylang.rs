@@ -5,6 +5,11 @@ pub mod ast;
 mod document;
 mod lexer;
 mod parser;
+mod checker;
+mod intermediate_repr;
+mod types;
+mod env;
+mod symbol;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);
