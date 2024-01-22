@@ -10,6 +10,8 @@ mod intermediate_repr;
 mod types;
 mod env;
 mod symbol;
+mod temp;
+mod escape;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);
