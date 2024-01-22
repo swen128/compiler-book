@@ -8,9 +8,7 @@ use std::fmt::Display;
 
 use logos::{Lexer, Logos};
 
-use crate::mylang::document::Span;
-
-use super::document::Spanned;
+use super::document::{Span, Spanned};
 
 #[derive(Logos, Debug, PartialEq, Eq, Clone, Hash)]
 #[logos(skip r"\s+")]

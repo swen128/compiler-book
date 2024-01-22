@@ -467,7 +467,7 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::mylang::{
+    use crate::{
         ast::*, env::Environment, intermediate_repr, types, types::IdGenerator, Span, Spanned,
     };
 
