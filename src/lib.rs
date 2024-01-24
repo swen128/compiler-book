@@ -12,6 +12,8 @@ mod parser;
 mod symbol;
 mod temp;
 mod types;
+mod translate;
+mod frame;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);
