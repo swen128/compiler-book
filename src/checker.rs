@@ -8,12 +8,12 @@ use super::types::{IdGenerator, RecordField};
 use super::{
     ast,
     env::{Environment, Scope, TypeTable},
-    intermediate_repr, types,
+    ir, types,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedExpr {
-    pub expr: intermediate_repr::Expr,
+    pub expr: ir::Expr,
     pub ty: types::Ty,
 }
 
@@ -28,23 +28,23 @@ fn trans_expr(
         ast::Expr::Seq(exprs) => trans_seq(exprs, env, id_generator),
 
         ast::Expr::NoValue => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Unit,
         }),
         ast::Expr::Nil => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Nil,
         }),
         ast::Expr::Num(_) => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Int,
         }),
         ast::Expr::String(_) => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::String,
         }),
         ast::Expr::Break => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Unit,
         }),
 
@@ -158,7 +158,7 @@ fn trans_var(
             },
             |entry| match entry {
                 ValueEntry::Variable(ty) => Ok(TypedExpr {
-                    expr: intermediate_repr::Expr,
+                    expr: ir::Expr,
                     ty: ty.clone(),
                 }),
                 _ => Err(vec![SemanticError::UnexpectedFunction {
@@ -186,7 +186,7 @@ fn trans_seq(
     match results.last().cloned() {
         // `sub_exprs` is empty, return no value.
         None => Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Unit,
         }),
 
@@ -468,7 +468,7 @@ impl From<&ast::Id> for Symbol {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::*, env::Environment, intermediate_repr, types, types::IdGenerator, Span, Spanned,
+        ast::*, env::Environment, ir, types, types::IdGenerator, Span, Spanned,
     };
 
     use super::{trans_expr, TypedExpr};
@@ -498,7 +498,7 @@ mod tests {
         let output = trans_expr(input, &mut env, &mut id_generator);
 
         let expected = Ok(TypedExpr {
-            expr: intermediate_repr::Expr,
+            expr: ir::Expr,
             ty: types::Ty::Int,
         });
 

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use crate::{
-    intermediate_repr,
+    ir,
     temp::{Label, Temp},
 };
 
@@ -35,7 +35,7 @@ pub trait Frame {
 }
 
 pub trait Access {
-    fn expr(&self, frame_pointer: &Temp) -> intermediate_repr::Expr;
+    fn expr(&self, frame_pointer: &Temp) -> ir::Expr;
 }
 
 pub struct Byte(usize);

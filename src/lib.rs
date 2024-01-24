@@ -6,7 +6,7 @@ mod checker;
 mod document;
 mod env;
 mod escape;
-mod intermediate_repr;
+mod ir;
 mod lexer;
 mod parser;
 mod symbol;
