@@ -28,23 +28,23 @@ fn trans_expr(
         ast::Expr::Seq(exprs) => trans_seq(exprs, env, id_generator),
 
         ast::Expr::NoValue => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Unit,
         }),
         ast::Expr::Nil => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Nil,
         }),
         ast::Expr::Num(_) => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Int,
         }),
         ast::Expr::String(_) => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::String,
         }),
         ast::Expr::Break => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Unit,
         }),
 
@@ -158,7 +158,7 @@ fn trans_var(
             },
             |entry| match entry {
                 ValueEntry::Variable(ty) => Ok(TypedExpr {
-                    expr: ir::Expr,
+                    expr: todo!(),
                     ty: ty.clone(),
                 }),
                 _ => Err(vec![SemanticError::UnexpectedFunction {
@@ -186,7 +186,7 @@ fn trans_seq(
     match results.last().cloned() {
         // `sub_exprs` is empty, return no value.
         None => Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Unit,
         }),
 
@@ -498,7 +498,7 @@ mod tests {
         let output = trans_expr(input, &mut env, &mut id_generator);
 
         let expected = Ok(TypedExpr {
-            expr: ir::Expr,
+            expr: todo!(),
             ty: types::Ty::Int,
         });
 

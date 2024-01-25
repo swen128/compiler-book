@@ -1,6 +1,7 @@
 use super::symbol::Symbol;
 
 /// Represents a value temporarily held in a register.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Temp();
 
 impl Temp {
@@ -13,6 +14,7 @@ impl Temp {
 pub struct TempTable {}
 
 /// Represents some machine-language location whose exact address is yet to be determined.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Label(Symbol);
 
 impl Label {
