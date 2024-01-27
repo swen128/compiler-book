@@ -104,6 +104,7 @@ pub struct For {
     pub id: IdNode,
     pub iter: Range,
     pub body: Spanned<Expr>,
+    pub escape: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +153,7 @@ type TyFields = Vec<Spanned<TyField>>;
 pub struct TyField {
     pub key: IdNode,
     pub ty: Spanned<TypeId>,
+    pub escape: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,6 +161,7 @@ pub struct VarDec {
     pub id: IdNode,
     pub ty: TypeHint,
     pub expr: SubExpr,
+    pub escape: bool,
 }
 
 type IdNode = Spanned<Id>;
@@ -198,7 +201,7 @@ impl Expr {
     pub fn assign(lhs: Spanned<LValue>, rhs: Spanned<Expr>) -> Self {
         Expr::Assign(Box::new(Assign { lhs, rhs }))
     }
-    
+
     pub fn variable(id: &str) -> Self {
         Expr::LValue(Box::new(LValue::Variable(Id(id.to_string()))))
     }
@@ -251,6 +254,7 @@ impl Expr {
             id,
             iter,
             body,
+            escape: true,
         }))
     }
 }
@@ -274,6 +278,7 @@ impl TyField {
         Self {
             key,
             ty,
+            escape: true,
         }
     }
 }
@@ -284,6 +289,7 @@ impl VarDec {
             id,
             ty,
             expr: Box::new(expr),
+            escape: true,
         }
     }
 }
