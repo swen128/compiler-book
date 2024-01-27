@@ -25,7 +25,7 @@ pub fn parse<'src>(tokens: Vec<Spanned<Token<'src>>>) -> Result<Program, Vec<Par
 
 fn program_parser<'src>() -> impl Parser<Token<'src>, Program, Error = ParseError<'src>> {
     expr_parser()
-        .map(|expr| Program(expr.value))
+        .map(|expr| Program(expr))
         .then_ignore(end())
         .labelled("program")
 }
@@ -283,17 +283,13 @@ fn declarations_parser<'src>(
         .then(type_hint.clone())
         .then_ignore(just(Token::ColonEq))
         .then(expr.clone())
-        .map(|((id, ty), expr)| VarDec {
-            id,
-            ty,
-            expr: Box::new(expr),
-        })
+        .map(|((id, ty), expr)| VarDec::new(id, ty, expr))
         .labelled("variable declaration");
 
     let tyfield = id
         .then_ignore(just(Token::Colon))
         .then(type_id)
-        .map(|(key, ty)| TyField { key, ty })
+        .map(|(key, ty)| TyField::new(key, ty))
         .map_with_span(Spanned::new)
         .labelled("type field");
     let tyfields = tyfield.separated_by(just(Token::Comma));
@@ -418,7 +414,7 @@ mod tests {
         let stream = Stream::from_iter(end_of_input, tokens.into_iter());
 
         let result = program_parser().parse(stream);
-        let expected = Ok(Program(Expr::Num(10)));
+        let expected = Ok(Program(Spanned::new(Expr::Num(10), Span::new(0, 2))));
 
         assert_eq!(result, expected);
     }
@@ -636,17 +632,17 @@ mod tests {
                 name: Spanned::new(Id("foo".to_string()), Span::new(3, 6)),
                 params: vec![
                     Spanned::new(
-                        TyField {
-                            key: Spanned::new(Id("x".to_string()), Span::new(8, 9)),
-                            ty: Spanned::new(TypeId("int".to_string()), Span::new(12, 15)),
-                        },
+                        TyField::new(
+                            Spanned::new(Id("x".to_string()), Span::new(8, 9)),
+                            Spanned::new(TypeId("int".to_string()), Span::new(12, 15)),
+                        ),
                         Span::new(8, 15),
                     ),
                     Spanned::new(
-                        TyField {
-                            key: Spanned::new(Id("y".to_string()), Span::new(17, 18)),
-                            ty: Spanned::new(TypeId("string".to_string()), Span::new(21, 27)),
-                        },
+                        TyField::new(
+                            Spanned::new(Id("y".to_string()), Span::new(17, 18)),
+                            Spanned::new(TypeId("string".to_string()), Span::new(21, 27)),
+                        ),
                         Span::new(17, 27),
                     ),
                 ],

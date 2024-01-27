@@ -3,7 +3,7 @@ use std::ops::Deref;
 use super::document::Spanned;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Program(pub Expr);
+pub struct Program(pub Spanned<Expr>);
 
 type SubExpr = Box<Spanned<Expr>>;
 type SubExprs = Vec<Spanned<Expr>>;
@@ -166,6 +166,14 @@ type IdNode = Spanned<Id>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Id(pub String);
 
+impl Deref for Id {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 type TypeHint = Option<Spanned<TypeId>>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -224,7 +232,10 @@ impl Expr {
     }
 
     pub fn let_(decs: Vec<Spanned<Dec>>, body: Spanned<Expr>) -> Self {
-        Expr::Let(Let { decs, body: Box::new(body) })
+        Expr::Let(Let {
+            decs,
+            body: Box::new(body),
+        })
     }
 
     pub fn if_(cond: Spanned<Expr>, then: Spanned<Expr>, else_: Option<Spanned<Expr>>) -> Self {
@@ -236,7 +247,11 @@ impl Expr {
     }
 
     pub fn for_(id: IdNode, iter: Range, body: Spanned<Expr>) -> Self {
-        Expr::For(Box::new(For { id, iter, body }))
+        Expr::For(Box::new(For {
+            id,
+            iter,
+            body,
+        }))
     }
 }
 
@@ -244,12 +259,31 @@ impl LValue {
     pub fn var(id: &str) -> Self {
         LValue::Variable(Id(id.to_string()))
     }
-    
+
     pub fn array_index(array: Spanned<LValue>, index: Spanned<Expr>) -> Self {
         LValue::ArrayIndex(Box::new(array), index)
     }
 
     pub fn record_field(record: Spanned<LValue>, field: IdNode) -> Self {
         LValue::RecordField(Box::new(record), field)
+    }
+}
+
+impl TyField {
+    pub fn new(key: IdNode, ty: Spanned<TypeId>) -> Self {
+        Self {
+            key,
+            ty,
+        }
+    }
+}
+
+impl VarDec {
+    pub fn new(id: IdNode, ty: TypeHint, expr: Spanned<Expr>) -> Self {
+        Self {
+            id,
+            ty,
+            expr: Box::new(expr),
+        }
     }
 }

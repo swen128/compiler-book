@@ -467,9 +467,7 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        ast::*, env::Environment, ir, types, types::IdGenerator, Span, Spanned,
-    };
+    use crate::{ast::*, env::Environment, ir, types, types::IdGenerator, Span, Spanned};
 
     use super::{trans_expr, TypedExpr};
 
@@ -485,11 +483,11 @@ mod tests {
                 decs: vec![spanned(
                     0,
                     4,
-                    Dec::VarDec(VarDec {
-                        id: spanned(0, 1, Id("x".to_string())),
-                        ty: None,
-                        expr: Box::new(spanned(2, 3, Expr::Num(0))),
-                    }),
+                    Dec::VarDec(VarDec::new(
+                        spanned(0, 1, Id("x".to_string())),
+                        None,
+                        spanned(2, 3, Expr::Num(0)),
+                    )),
                 )],
                 body: Box::new(spanned(5, 6, Expr::variable("x"))),
             }),
@@ -517,11 +515,11 @@ mod tests {
                 decs: vec![spanned(
                     0,
                     4,
-                    Dec::VarDec(VarDec {
-                        id: spanned(0, 1, Id("x".to_string())),
-                        ty: Some(spanned(1, 2, TypeId("string".to_string()))),
-                        expr: Box::new(spanned(2, 3, Expr::Num(0))),
-                    }),
+                    Dec::VarDec(VarDec::new(
+                        spanned(0, 1, Id("x".to_string())),
+                        Some(spanned(1, 2, TypeId("string".to_string()))),
+                        spanned(2, 3, Expr::Num(0)),
+                    )),
                 )],
                 body: Box::new(spanned(5, 6, Expr::variable("x"))),
             }),
