@@ -13,10 +13,10 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Move(Box<Expr>, Box<Expr>),
-    Exp(Box<Expr>),
-    Jump(Box<Expr>, Vec<Label>),
-    CJump(RelOp, Box<Expr>, Box<Expr>, Label, Label),
+    Move(Expr, Expr),
+    Exp(Expr),
+    Jump(Expr, Vec<Label>),
+    CJump(RelOp, Expr, Expr, Label, Label),
     Seq(Box<Statement>, Box<Statement>),
     Label(Label),
 }
