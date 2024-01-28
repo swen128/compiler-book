@@ -29,6 +29,12 @@ pub struct RecordField {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FunctionSignature {
+    pub params: Vec<Ty>,
+    pub result: Ty,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UniqueId(pub usize);
 
 impl UniqueId {

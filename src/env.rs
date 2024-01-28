@@ -1,3 +1,5 @@
+use crate::types::FunctionSignature;
+
 use super::{
     symbol::{symbol, Symbol, SymbolTable},
     types::Ty,
@@ -18,7 +20,13 @@ pub struct ValueTable {
 
 pub enum ValueEntry {
     Variable(Ty),
-    Function { params: Vec<Ty>, result: Ty },
+    Function(FunctionSignature),
+}
+
+impl ValueEntry {
+    pub fn func(params: Vec<Ty>, result: Ty) -> Self {
+        Self::Function(FunctionSignature { params, result })
+    }
 }
 
 impl Environment {
@@ -47,10 +55,7 @@ impl ValueTable {
         let mut table = SymbolTable::new();
         table.insert(
             symbol("print"),
-            ValueEntry::Function {
-                params: vec![Ty::String],
-                result: Ty::Unit,
-            },
+            ValueEntry::func(vec![Ty::String], Ty::Unit),
         );
         Self { table }
     }
