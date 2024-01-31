@@ -1,11 +1,13 @@
 use thiserror::Error;
 
-use crate::types::{FunctionSignature, Ty};
+use crate::temp::Label;
+use crate::translate::{alloc_local, Access, Level};
 
 use super::document::{Span, Spanned};
 use super::env::ValueEntry;
+use super::frame::Frame;
 use super::symbol::Symbol;
-use super::types::{IdGenerator, RecordField};
+use super::types::{FunctionSignature, IdGenerator, RecordField, Ty};
 use super::{
     ast,
     env::{Environment, Scope, TypeTable},
@@ -31,11 +33,16 @@ impl Checker {
         }
     }
 
-    pub fn trans_expr(&mut self, expr: Spanned<ast::Expr>, env: &mut Environment) -> TypedExpr {
+    pub fn trans_expr<F: Frame + Clone + PartialEq>(
+        &mut self,
+        expr: Spanned<ast::Expr>,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
         match expr.value {
-            ast::Expr::Let(expr) => self.trans_let(expr, env),
+            ast::Expr::Let(expr) => self.trans_let(expr, parent_level, env),
             ast::Expr::LValue(var) => self.trans_var(*var, expr.span, env),
-            ast::Expr::Seq(exprs) => self.trans_seq(exprs, env),
+            ast::Expr::Seq(exprs) => self.trans_seq(exprs, parent_level, env),
 
             ast::Expr::NoValue => TypedExpr {
                 expr: todo!(),
@@ -61,26 +68,29 @@ impl Checker {
             ast::Expr::Array(_) => todo!(),
             ast::Expr::Record(_) => todo!(),
             ast::Expr::Assign(_) => todo!(),
-            ast::Expr::Neg(_) => self.trans_specific_type_expr(types::Ty::Int, expr, env),
+            ast::Expr::Neg(_) => {
+                self.trans_specific_type_expr(types::Ty::Int, expr, parent_level, env)
+            }
             ast::Expr::BiOp(_, _, _) => todo!(),
-            ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, env),
+            ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
             ast::Expr::If(_) => todo!(),
             ast::Expr::While(_) => todo!(),
             ast::Expr::For(_) => todo!(),
         }
     }
 
-    fn trans_func_call(
+    fn trans_func_call<F: Frame + Clone + PartialEq>(
         &mut self,
         name: Spanned<ast::Id>,
         args: Vec<Spanned<ast::Expr>>,
-        env: &mut Environment,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
     ) -> TypedExpr {
         let signature = get_function(&name, env, &mut self.errors).cloned();
 
         let args_typed = args.into_iter().map(|arg| {
             let span = arg.span;
-            Spanned::new(self.trans_expr(arg, env), span)
+            Spanned::new(self.trans_expr(arg, parent_level, env), span)
         });
 
         // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
@@ -105,14 +115,15 @@ impl Checker {
         }
     }
 
-    fn trans_specific_type_expr(
+    fn trans_specific_type_expr<F: Frame + Clone + PartialEq>(
         &mut self,
         expected_ty: types::Ty,
         expr: Spanned<ast::Expr>,
-        env: &mut Environment,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
     ) -> TypedExpr {
         let span = expr.span;
-        let TypedExpr { ty: found_ty, expr } = self.trans_expr(expr, env);
+        let TypedExpr { ty: found_ty, expr } = self.trans_expr(expr, parent_level, env);
 
         if !found_ty.is_subtype_of(&expected_ty) {
             self.errors.push(SemanticError::TypeError {
@@ -128,7 +139,12 @@ impl Checker {
         }
     }
 
-    fn trans_var(&mut self, var: ast::LValue, span: Span, env: &Environment) -> TypedExpr {
+    fn trans_var<F: Frame + Clone + PartialEq>(
+        &mut self,
+        var: ast::LValue,
+        span: Span,
+        env: &Environment<F>,
+    ) -> TypedExpr {
         match var {
             ast::LValue::Variable(id) => {
                 let result = env.values.get(&Symbol::from(&id)).map_or_else(
@@ -139,7 +155,7 @@ impl Checker {
                         }])
                     },
                     |entry| match entry {
-                        ValueEntry::Variable(ty) => Ok(TypedExpr {
+                        ValueEntry::Variable { ty, .. } => Ok(TypedExpr {
                             expr: todo!(),
                             ty: ty.clone(),
                         }),
@@ -167,14 +183,15 @@ impl Checker {
         }
     }
 
-    fn trans_seq(
+    fn trans_seq<F: Frame + Clone + PartialEq>(
         &mut self,
         sub_exprs: Vec<Spanned<ast::Expr>>,
-        env: &mut Environment,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
     ) -> TypedExpr {
         let results = sub_exprs
             .into_iter()
-            .map(|sub_expr| self.trans_expr(sub_expr, env))
+            .map(|sub_expr| self.trans_expr(sub_expr, parent_level, env))
             .collect::<Vec<_>>();
 
         match results.last().cloned() {
@@ -191,19 +208,29 @@ impl Checker {
         }
     }
 
-    fn trans_let(&mut self, expr: ast::Let, env: &mut Environment) -> TypedExpr {
+    fn trans_let<F: Frame + Clone + PartialEq>(
+        &mut self,
+        expr: ast::Let,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
         let ast::Let { decs, body } = expr;
         let mut scope = Scope::new(env);
 
         for dec in decs {
-            self.trans_dec(dec, &mut scope);
+            self.trans_dec(dec, parent_level, &mut scope);
         }
 
-        self.trans_expr(*body, &mut scope)
+        self.trans_expr(*body, parent_level, &mut scope)
     }
 
     /// Type-check the given declaration and add the resulting binding to the environment.
-    fn trans_dec(&mut self, dec: Spanned<ast::Dec>, env: &mut Environment) {
+    fn trans_dec<F: Frame + Clone + PartialEq>(
+        &mut self,
+        dec: Spanned<ast::Dec>,
+        parent_level: &Level<F>,
+        env: &mut Environment<F>,
+    ) {
         let span = dec.span;
 
         match dec.value {
@@ -221,16 +248,18 @@ impl Checker {
                 id: Spanned { value: id, .. },
                 ty: declared_ty,
                 expr,
-                ..
+                escape,
             }) => {
                 let symbol = Symbol::from(&id);
                 let declared_ty = declared_ty
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
-                let rhs = self.trans_expr(*expr, env);
+                let rhs = self.trans_expr(*expr, parent_level, env);
                 let ty = declared_ty.unwrap_or(rhs.ty);
+                let access = alloc_local(&parent_level, escape);
 
-                env.values.insert(symbol, ValueEntry::Variable(ty));
+                env.values
+                    .insert(symbol, ValueEntry::Variable { ty, access });
             }
 
             ast::Dec::FnDec(ast::FnDec {
@@ -250,13 +279,23 @@ impl Checker {
                     .cloned();
                 let params = trans_function_params(params, &env.types, &mut self.errors);
 
-                let params_types = params.iter().map(|(_, ty)| ty.clone()).collect();
+                let params_types = params.iter().map(|(_, ty, _)| ty.clone()).collect();
                 let typed_body = {
+                    let level = Level::<F>::new(
+                        parent_level.clone(),
+                        Label::new(),
+                        params.iter().map(|(_, _, escape)| *escape).collect(),
+                    );
+
                     let mut scope = Scope::new(env);
-                    for (symbol, ty) in params {
-                        scope.values.insert(symbol, ValueEntry::Variable(ty));
+                    for (symbol, ty, escape) in params {
+                        let access = alloc_local(&level, escape);
+
+                        scope
+                            .values
+                            .insert(symbol, ValueEntry::Variable { ty, access });
                     }
-                    self.trans_expr(*body, &mut scope)
+                    self.trans_expr(*body, parent_level, &mut scope)
                 };
 
                 let is_return_type_comatible = declared_return_ty
@@ -283,7 +322,7 @@ fn trans_function_params(
     params: Vec<Spanned<ast::TyField>>,
     env: &TypeTable,
     errors: &mut Vec<SemanticError>,
-) -> Vec<(Symbol, types::Ty)> {
+) -> Vec<(Symbol, types::Ty, bool)> {
     let entries = params
         .into_iter()
         .map(|spanned| spanned.value)
@@ -299,7 +338,7 @@ fn trans_function_params(
                 types::Ty::Name(type_id, Box::new(types::Ty::Unknown))
             });
 
-            (param_name, ty)
+            (param_name, ty, param.escape)
         })
         .collect();
 
@@ -369,16 +408,16 @@ fn check_function_arg_types(
 }
 
 /// Looks up the given function name in the environment and returns its signature.
-fn get_function<'a>(
+fn get_function<'a, F: Frame + Clone + PartialEq>(
     name: &Spanned<ast::Id>,
-    env: &'a Environment,
+    env: &'a Environment<F>,
     errors: &mut Vec<SemanticError>,
 ) -> Option<&'a FunctionSignature> {
     let symbol = Symbol::from(&name.value);
 
     match env.values.get(&symbol) {
         Some(ValueEntry::Function(signature)) => Some(signature),
-        Some(ValueEntry::Variable(_)) => {
+        Some(ValueEntry::Variable { .. }) => {
             errors.push(SemanticError::UnexpectedVariable {
                 name: symbol.clone(),
                 span: name.span,
@@ -441,14 +480,15 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::*, env::Environment, ir, types, types::IdGenerator, Span, Spanned};
+    use crate::{ast::*, env::Environment, frame::Byte, ir, temp::Temp, types, Span, Spanned};
 
     use super::*;
 
     #[test]
     fn valid_variable() {
         let mut analyzer = Checker::new();
-        let mut env = Environment::base();
+        let mut env = Environment::<MockFrame>::base();
+        let level = Level::<MockFrame>::outermost();
 
         let input = spanned(
             0,
@@ -467,7 +507,7 @@ mod tests {
             }),
         );
 
-        let output = analyzer.trans_expr(input, &mut env);
+        let output = analyzer.trans_expr(input, &level, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -482,7 +522,8 @@ mod tests {
     #[test]
     fn type_error() {
         let mut analyzer = Checker::new();
-        let mut env = Environment::base();
+        let mut env = Environment::<MockFrame>::base();
+        let level = Level::<MockFrame>::outermost();
 
         let input = spanned(
             0,
@@ -501,7 +542,7 @@ mod tests {
             }),
         );
 
-        let output = analyzer.trans_expr(input, &mut env);
+        let output = analyzer.trans_expr(input, &level, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -519,5 +560,42 @@ mod tests {
 
     fn spanned<T>(start: usize, end: usize, value: T) -> Spanned<T> {
         Spanned::new(value, Span::new(start, end))
+    }
+
+    #[derive(Clone, PartialEq)]
+    struct MockFrame {}
+
+    impl Frame for MockFrame {
+        type Access = MockAccess;
+
+        const WORD_SIZE: Byte = Byte(8);
+
+        fn new(name: Label, formals: Vec<bool>) -> Self {
+            todo!()
+        }
+
+        fn name(&self) -> String {
+            todo!()
+        }
+
+        fn formals(&self) -> Vec<Self::Access> {
+            todo!()
+        }
+
+        fn alloc_local(&mut self, escape: bool) -> Self::Access {
+            todo!()
+        }
+
+        fn exp(&self, access: Self::Access, stack_frame: ir::Expr) -> ir::Expr {
+            todo!()
+        }
+    }
+
+    struct MockAccess {}
+
+    impl crate::frame::Access for MockAccess {
+        fn expr(&self, frame_pointer: &Temp) -> ir::Expr {
+            todo!()
+        }
     }
 }

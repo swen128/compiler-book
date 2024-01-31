@@ -1,35 +1,36 @@
-use crate::types::FunctionSignature;
-
 use super::{
+    frame::Frame,
     symbol::{symbol, Symbol, SymbolTable},
+    translate::Access,
+    types::FunctionSignature,
     types::Ty,
 };
 
-pub struct Environment {
+pub struct Environment<F: Frame + Clone + PartialEq> {
     pub types: TypeTable,
-    pub values: ValueTable,
+    pub values: ValueTable<F>,
 }
 
 pub struct TypeTable {
     table: SymbolTable<Ty>,
 }
 
-pub struct ValueTable {
-    table: SymbolTable<ValueEntry>,
+pub struct ValueTable<F: Frame + Clone + PartialEq> {
+    table: SymbolTable<ValueEntry<F>>,
 }
 
-pub enum ValueEntry {
-    Variable(Ty),
+pub enum ValueEntry<F: Frame + Clone + PartialEq> {
+    Variable { ty: Ty, access: Access<F> },
     Function(FunctionSignature),
 }
 
-impl ValueEntry {
+impl<F: Frame + Clone + PartialEq> ValueEntry<F> {
     pub fn func(params: Vec<Ty>, result: Ty) -> Self {
         Self::Function(FunctionSignature { params, result })
     }
 }
 
-impl Environment {
+impl<F: Frame + Clone + PartialEq> Environment<F> {
     /// Returns an environment with the built-in types and functions.
     pub fn base() -> Self {
         Self {
@@ -49,7 +50,7 @@ impl Environment {
     }
 }
 
-impl ValueTable {
+impl<F: Frame + Clone + PartialEq> ValueTable<F> {
     /// Returns a table with the built-in functions.
     pub fn base() -> Self {
         let mut table = SymbolTable::new();
@@ -60,11 +61,11 @@ impl ValueTable {
         Self { table }
     }
 
-    pub fn get(&self, symbol: &Symbol) -> Option<&ValueEntry> {
+    pub fn get(&self, symbol: &Symbol) -> Option<&ValueEntry<F>> {
         self.table.get(symbol)
     }
 
-    pub fn insert(&mut self, symbol: Symbol, value: ValueEntry) {
+    pub fn insert(&mut self, symbol: Symbol, value: ValueEntry<F>) {
         self.table.insert(symbol, value);
     }
 
@@ -103,30 +104,30 @@ impl TypeTable {
     }
 }
 
-pub struct Scope<'a>(&'a mut Environment);
+pub struct Scope<'a, F: Frame + Clone + PartialEq>(&'a mut Environment<F>);
 
-impl<'a> Scope<'a> {
-    pub fn new(env: &'a mut Environment) -> Self {
+impl<'a, F: Frame + Clone + PartialEq> Scope<'a, F> {
+    pub fn new(env: &'a mut Environment<F>) -> Self {
         env.begin_scope();
         Self(env)
     }
 }
 
-impl<'a> Drop for Scope<'a> {
+impl<'a, F: Frame + Clone + PartialEq> Drop for Scope<'a, F> {
     fn drop(&mut self) {
         self.0.end_scope();
     }
 }
 
-impl<'a> std::ops::Deref for Scope<'a> {
-    type Target = Environment;
+impl<'a, F: Frame + Clone + PartialEq> std::ops::Deref for Scope<'a, F> {
+    type Target = Environment<F>;
 
     fn deref(&self) -> &Self::Target {
         self.0
     }
 }
 
-impl<'a> std::ops::DerefMut for Scope<'a> {
+impl<'a, F: Frame + Clone + PartialEq> std::ops::DerefMut for Scope<'a, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0
     }

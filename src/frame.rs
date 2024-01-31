@@ -32,13 +32,15 @@ pub trait Frame {
     /// ## Parameters
     /// - `escape`: Whether the variable escapes or not.
     fn alloc_local(&mut self, escape: bool) -> Self::Access;
+
+    fn exp(&self, access: Self::Access, stack_frame: ir::Expr) -> ir::Expr;
 }
 
 pub trait Access {
     fn expr(&self, frame_pointer: &Temp) -> ir::Expr;
 }
 
-pub struct Byte(usize);
+pub struct Byte(pub usize);
 
 impl Deref for Byte {
     type Target = usize;
