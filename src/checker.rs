@@ -18,329 +18,263 @@ pub struct TypedExpr {
     pub ty: types::Ty,
 }
 
-fn trans_expr(
-    expr: Spanned<ast::Expr>,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    match expr.value {
-        ast::Expr::Let(expr) => trans_let(expr, env, errors, id_generator),
-        ast::Expr::LValue(var) => trans_var(*var, expr.span, env, errors, id_generator),
-        ast::Expr::Seq(exprs) => trans_seq(exprs, env, errors, id_generator),
-
-        ast::Expr::NoValue => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Unit,
-        },
-        ast::Expr::Nil => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Nil,
-        },
-        ast::Expr::Num(_) => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Int,
-        },
-        ast::Expr::String(_) => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::String,
-        },
-        ast::Expr::Break => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Unit,
-        },
-
-        ast::Expr::Array(_) => todo!(),
-        ast::Expr::Record(_) => todo!(),
-        ast::Expr::Assign(_) => todo!(),
-        ast::Expr::Neg(_) => {
-            trans_specific_type_expr(types::Ty::Int, expr, env, errors, id_generator)
-        }
-        ast::Expr::BiOp(_, _, _) => todo!(),
-        ast::Expr::FuncCall(name, args) => trans_func_call(name, args, env, errors, id_generator),
-        ast::Expr::If(_) => todo!(),
-        ast::Expr::While(_) => todo!(),
-        ast::Expr::For(_) => todo!(),
-    }
+pub struct Checker {
+    errors: Vec<SemanticError>,
+    id_generator: IdGenerator,
 }
 
-/// Looks up the given function name in the environment and returns its signature.
-fn get_function<'a>(
-    name: &Spanned<ast::Id>,
-    env: &'a Environment,
-    errors: &mut Vec<SemanticError>,
-) -> Option<&'a FunctionSignature> {
-    let symbol = Symbol::from(&name.value);
-
-    match env.values.get(&symbol) {
-        Some(ValueEntry::Function(signature)) => Some(signature),
-        Some(ValueEntry::Variable(_)) => {
-            errors.push(SemanticError::UnexpectedVariable {
-                name: symbol.clone(),
-                span: name.span,
-            });
-            None
-        }
-        None => {
-            errors.push(SemanticError::UndefinedFunction {
-                name: symbol.clone(),
-                span: name.span,
-            });
-            None
+impl Checker {
+    pub fn new() -> Self {
+        Self {
+            errors: vec![],
+            id_generator: IdGenerator::new(),
         }
     }
-}
 
-fn trans_func_call(
-    name: Spanned<ast::Id>,
-    args: Vec<Spanned<ast::Expr>>,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    let signature = get_function(&name, env, errors).cloned();
+    pub fn trans_expr(&mut self, expr: Spanned<ast::Expr>, env: &mut Environment) -> TypedExpr {
+        match expr.value {
+            ast::Expr::Let(expr) => self.trans_let(expr, env),
+            ast::Expr::LValue(var) => self.trans_var(*var, expr.span, env),
+            ast::Expr::Seq(exprs) => self.trans_seq(exprs, env),
 
-    let args_typed = args.into_iter().map(|arg| {
-        let span = arg.span;
-        Spanned::new(trans_expr(arg, env, errors, id_generator), span)
-    });
-
-    // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
-    let whole_args_span = name.span;
-
-    match signature {
-        Some(FunctionSignature { params, result }) => {
-            let arg_type_errors =
-                check_function_arg_types(&args_typed.collect(), &params, whole_args_span);
-            errors.extend(arg_type_errors);
-
-            TypedExpr {
+            ast::Expr::NoValue => TypedExpr {
                 expr: todo!(),
-                ty: result.clone(),
+                ty: types::Ty::Unit,
+            },
+            ast::Expr::Nil => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::Nil,
+            },
+            ast::Expr::Num(_) => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::Int,
+            },
+            ast::Expr::String(_) => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::String,
+            },
+            ast::Expr::Break => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::Unit,
+            },
+
+            ast::Expr::Array(_) => todo!(),
+            ast::Expr::Record(_) => todo!(),
+            ast::Expr::Assign(_) => todo!(),
+            ast::Expr::Neg(_) => self.trans_specific_type_expr(types::Ty::Int, expr, env),
+            ast::Expr::BiOp(_, _, _) => todo!(),
+            ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, env),
+            ast::Expr::If(_) => todo!(),
+            ast::Expr::While(_) => todo!(),
+            ast::Expr::For(_) => todo!(),
+        }
+    }
+
+    fn trans_func_call(
+        &mut self,
+        name: Spanned<ast::Id>,
+        args: Vec<Spanned<ast::Expr>>,
+        env: &mut Environment,
+    ) -> TypedExpr {
+        let signature = get_function(&name, env, &mut self.errors).cloned();
+
+        let args_typed = args.into_iter().map(|arg| {
+            let span = arg.span;
+            Spanned::new(self.trans_expr(arg, env), span)
+        });
+
+        // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
+        let whole_args_span = name.span;
+
+        match signature {
+            Some(FunctionSignature { params, result }) => {
+                let arg_type_errors =
+                    check_function_arg_types(&args_typed.collect(), &params, whole_args_span);
+                self.errors.extend(arg_type_errors);
+
+                TypedExpr {
+                    expr: todo!(),
+                    ty: result.clone(),
+                }
             }
+
+            None => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::Unknown,
+            },
+        }
+    }
+
+    fn trans_specific_type_expr(
+        &mut self,
+        expected_ty: types::Ty,
+        expr: Spanned<ast::Expr>,
+        env: &mut Environment,
+    ) -> TypedExpr {
+        let span = expr.span;
+        let TypedExpr { ty: found_ty, expr } = self.trans_expr(expr, env);
+
+        if !found_ty.is_subtype_of(&expected_ty) {
+            self.errors.push(SemanticError::TypeError {
+                expected: expected_ty.clone(),
+                found: found_ty,
+                span,
+            });
         }
 
-        None => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Unknown,
-        },
-    }
-}
-
-fn check_function_arg_types(
-    args: &Vec<Spanned<TypedExpr>>,
-    param_types: &Vec<Ty>,
-    whole_args_span: Span,
-) -> Vec<SemanticError> {
-    let mut errors = vec![];
-
-    if args.len() != param_types.len() {
-        errors.push(SemanticError::WrongNumberOfArguments {
-            expected: param_types.len(),
-            found: args.len(),
-            span: whole_args_span,
-        });
+        TypedExpr {
+            ty: expected_ty,
+            expr,
+        }
     }
 
-    args.iter()
-        .map(|arg| Spanned::new(arg.value.ty.clone(), arg.span))
-        .zip(param_types.iter())
-        .filter(|(arg, param)| !arg.value.is_subtype_of(param))
-        .for_each(|(arg, param)| {
-            errors.push(SemanticError::TypeError {
-                expected: param.clone(),
-                found: arg.value.clone(),
-                span: arg.span,
-            });
-        });
+    fn trans_var(&mut self, var: ast::LValue, span: Span, env: &Environment) -> TypedExpr {
+        match var {
+            ast::LValue::Variable(id) => {
+                let result = env.values.get(&Symbol::from(&id)).map_or_else(
+                    || {
+                        Err(vec![SemanticError::UndefinedVariable {
+                            name: Symbol::from(&id),
+                            span,
+                        }])
+                    },
+                    |entry| match entry {
+                        ValueEntry::Variable(ty) => Ok(TypedExpr {
+                            expr: todo!(),
+                            ty: ty.clone(),
+                        }),
+                        _ => Err(vec![SemanticError::UnexpectedFunction {
+                            name: Symbol::from(&id),
+                            span,
+                        }]),
+                    },
+                );
 
-    errors
-}
-
-fn trans_specific_type_expr(
-    expected_ty: types::Ty,
-    expr: Spanned<ast::Expr>,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    let span = expr.span;
-    let TypedExpr { ty: found_ty, expr } = trans_expr(expr, env, errors, id_generator);
-
-    if !found_ty.is_subtype_of(&expected_ty) {
-        errors.push(SemanticError::TypeError {
-            expected: expected_ty.clone(),
-            found: found_ty,
-            span,
-        });
-    }
-
-    TypedExpr {
-        ty: expected_ty,
-        expr,
-    }
-}
-
-fn trans_var(
-    var: ast::LValue,
-    span: Span,
-    env: &Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    match var {
-        ast::LValue::Variable(id) => {
-            let result = env.values.get(&Symbol::from(&id)).map_or_else(
-                || {
-                    Err(vec![SemanticError::UndefinedVariable {
-                        name: Symbol::from(&id),
-                        span,
-                    }])
-                },
-                |entry| match entry {
-                    ValueEntry::Variable(ty) => Ok(TypedExpr {
-                        expr: todo!(),
-                        ty: ty.clone(),
-                    }),
-                    _ => Err(vec![SemanticError::UnexpectedFunction {
-                        name: Symbol::from(&id),
-                        span,
-                    }]),
-                },
-            );
-
-            match result {
-                Ok(typed_expr) => typed_expr,
-                Err(new_errors) => {
-                    errors.extend(new_errors);
-                    TypedExpr {
-                        expr: todo!(),
-                        ty: types::Ty::Unknown,
+                match result {
+                    Ok(typed_expr) => typed_expr,
+                    Err(new_errors) => {
+                        self.errors.extend(new_errors);
+                        TypedExpr {
+                            expr: todo!(),
+                            ty: types::Ty::Unknown,
+                        }
                     }
                 }
             }
+
+            ast::LValue::RecordField(_, _) => todo!(),
+            ast::LValue::ArrayIndex(_, _) => todo!(),
         }
-
-        ast::LValue::RecordField(_, _) => todo!(),
-        ast::LValue::ArrayIndex(_, _) => todo!(),
-    }
-}
-
-fn trans_seq(
-    sub_exprs: Vec<Spanned<ast::Expr>>,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    let results = sub_exprs
-        .into_iter()
-        .map(|sub_expr| trans_expr(sub_expr, env, errors, id_generator))
-        .collect::<Vec<_>>();
-
-    match results.last().cloned() {
-        // `sub_exprs` is empty, return no value.
-        None => TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::Unit,
-        },
-
-        Some(result) => TypedExpr {
-            expr: todo!(),
-            ty: result.ty,
-        },
-    }
-}
-
-fn trans_let(
-    expr: ast::Let,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) -> TypedExpr {
-    let ast::Let { decs, body } = expr;
-    let mut scope = Scope::new(env);
-
-    for dec in decs {
-        trans_dec(dec, &mut scope, errors, id_generator);
     }
 
-    trans_expr(*body, &mut scope, errors, id_generator)
-}
+    fn trans_seq(
+        &mut self,
+        sub_exprs: Vec<Spanned<ast::Expr>>,
+        env: &mut Environment,
+    ) -> TypedExpr {
+        let results = sub_exprs
+            .into_iter()
+            .map(|sub_expr| self.trans_expr(sub_expr, env))
+            .collect::<Vec<_>>();
 
-/// Type-check the given declaration and add the resulting binding to the environment.
-fn trans_dec(
-    dec: Spanned<ast::Dec>,
-    env: &mut Environment,
-    errors: &mut Vec<SemanticError>,
-    id_generator: &mut IdGenerator,
-) {
-    let span = dec.span;
-
-    match dec.value {
-        ast::Dec::TypeDec(ast::TyDec {
-            id: Spanned { span: _, value: id },
-            ty: Spanned { span: _, value: ty },
-        }) => {
-            env.types
-                .insert(Symbol::from(&id), trans_type(ty, &env.types, id_generator));
-        }
-
-        ast::Dec::VarDec(ast::VarDec {
-            id: Spanned { value: id, .. },
-            ty: declared_ty,
-            expr,
-            ..
-        }) => {
-            let symbol = Symbol::from(&id);
-            let declared_ty = declared_ty
-                .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
-                .cloned();
-            let rhs = trans_expr(*expr, env, errors, id_generator);
-            let ty = declared_ty.unwrap_or(rhs.ty);
-
-            env.values.insert(symbol, ValueEntry::Variable(ty));
-        }
-
-        ast::Dec::FnDec(ast::FnDec {
-            name: Spanned {
-                span: _,
-                value: name,
+        match results.last().cloned() {
+            // `sub_exprs` is empty, return no value.
+            None => TypedExpr {
+                expr: todo!(),
+                ty: types::Ty::Unit,
             },
-            params,
-            return_type,
-            body,
-        }) => {
-            let symbol = Symbol::from(&name);
-            let body_span = body.span;
-            let declared_return_ty = return_type
-                .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
-                .cloned();
-            let params = trans_function_params(params, &env.types, errors);
 
-            let params_types = params.iter().map(|(_, ty)| ty.clone()).collect();
-            let typed_body = {
-                let mut scope = Scope::new(env);
-                for (symbol, ty) in params {
-                    scope.values.insert(symbol, ValueEntry::Variable(ty));
-                }
-                trans_expr(*body, &mut scope, errors, id_generator)
-            };
+            Some(result) => TypedExpr {
+                expr: todo!(),
+                ty: result.ty,
+            },
+        }
+    }
 
-            let is_return_type_comatible = declared_return_ty
-                .clone()
-                .map_or(true, |ty| typed_body.ty.is_subtype_of(&ty));
+    fn trans_let(&mut self, expr: ast::Let, env: &mut Environment) -> TypedExpr {
+        let ast::Let { decs, body } = expr;
+        let mut scope = Scope::new(env);
 
-            if !is_return_type_comatible {
-                errors.push(SemanticError::TypeError {
-                    expected: declared_return_ty.clone().unwrap(),
-                    found: typed_body.ty.clone(),
-                    span: body_span,
-                });
+        for dec in decs {
+            self.trans_dec(dec, &mut scope);
+        }
+
+        self.trans_expr(*body, &mut scope)
+    }
+
+    /// Type-check the given declaration and add the resulting binding to the environment.
+    fn trans_dec(&mut self, dec: Spanned<ast::Dec>, env: &mut Environment) {
+        let span = dec.span;
+
+        match dec.value {
+            ast::Dec::TypeDec(ast::TyDec {
+                id: Spanned { span: _, value: id },
+                ty: Spanned { span: _, value: ty },
+            }) => {
+                env.types.insert(
+                    Symbol::from(&id),
+                    trans_type(ty, &env.types, &mut self.id_generator),
+                );
             }
 
-            let return_ty = declared_return_ty.unwrap_or(typed_body.ty);
-            env.values
-                .insert(symbol, ValueEntry::func(params_types, return_ty));
+            ast::Dec::VarDec(ast::VarDec {
+                id: Spanned { value: id, .. },
+                ty: declared_ty,
+                expr,
+                ..
+            }) => {
+                let symbol = Symbol::from(&id);
+                let declared_ty = declared_ty
+                    .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
+                    .cloned();
+                let rhs = self.trans_expr(*expr, env);
+                let ty = declared_ty.unwrap_or(rhs.ty);
+
+                env.values.insert(symbol, ValueEntry::Variable(ty));
+            }
+
+            ast::Dec::FnDec(ast::FnDec {
+                name:
+                    Spanned {
+                        span: _,
+                        value: name,
+                    },
+                params,
+                return_type,
+                body,
+            }) => {
+                let symbol = Symbol::from(&name);
+                let body_span = body.span;
+                let declared_return_ty = return_type
+                    .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
+                    .cloned();
+                let params = trans_function_params(params, &env.types, &mut self.errors);
+
+                let params_types = params.iter().map(|(_, ty)| ty.clone()).collect();
+                let typed_body = {
+                    let mut scope = Scope::new(env);
+                    for (symbol, ty) in params {
+                        scope.values.insert(symbol, ValueEntry::Variable(ty));
+                    }
+                    self.trans_expr(*body, &mut scope)
+                };
+
+                let is_return_type_comatible = declared_return_ty
+                    .clone()
+                    .map_or(true, |ty| typed_body.ty.is_subtype_of(&ty));
+
+                if !is_return_type_comatible {
+                    self.errors.push(SemanticError::TypeError {
+                        expected: declared_return_ty.clone().unwrap(),
+                        found: typed_body.ty.clone(),
+                        span: body_span,
+                    });
+                }
+
+                let return_ty = declared_return_ty.unwrap_or(typed_body.ty);
+                env.values
+                    .insert(symbol, ValueEntry::func(params_types, return_ty));
+            }
         }
     }
 }
@@ -404,6 +338,63 @@ fn trans_type_name(id: ast::TypeId, env: &TypeTable) -> types::Ty {
     types::Ty::Name(symbol, ty)
 }
 
+fn check_function_arg_types(
+    args: &Vec<Spanned<TypedExpr>>,
+    param_types: &Vec<Ty>,
+    whole_args_span: Span,
+) -> Vec<SemanticError> {
+    let mut errors = vec![];
+
+    if args.len() != param_types.len() {
+        errors.push(SemanticError::WrongNumberOfArguments {
+            expected: param_types.len(),
+            found: args.len(),
+            span: whole_args_span,
+        });
+    }
+
+    args.iter()
+        .map(|arg| Spanned::new(arg.value.ty.clone(), arg.span))
+        .zip(param_types.iter())
+        .filter(|(arg, param)| !arg.value.is_subtype_of(param))
+        .for_each(|(arg, param)| {
+            errors.push(SemanticError::TypeError {
+                expected: param.clone(),
+                found: arg.value.clone(),
+                span: arg.span,
+            });
+        });
+
+    errors
+}
+
+/// Looks up the given function name in the environment and returns its signature.
+fn get_function<'a>(
+    name: &Spanned<ast::Id>,
+    env: &'a Environment,
+    errors: &mut Vec<SemanticError>,
+) -> Option<&'a FunctionSignature> {
+    let symbol = Symbol::from(&name.value);
+
+    match env.values.get(&symbol) {
+        Some(ValueEntry::Function(signature)) => Some(signature),
+        Some(ValueEntry::Variable(_)) => {
+            errors.push(SemanticError::UnexpectedVariable {
+                name: symbol.clone(),
+                span: name.span,
+            });
+            None
+        }
+        None => {
+            errors.push(SemanticError::UndefinedFunction {
+                name: symbol.clone(),
+                span: name.span,
+            });
+            None
+        }
+    }
+}
+
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SemanticError {
     #[error("Type mismatch: expected {expected:?}, found {found:?}")]
@@ -456,9 +447,8 @@ mod tests {
 
     #[test]
     fn valid_variable() {
+        let mut analyzer = Checker::new();
         let mut env = Environment::base();
-        let mut errors = vec![];
-        let mut id_generator = IdGenerator::new();
 
         let input = spanned(
             0,
@@ -477,7 +467,7 @@ mod tests {
             }),
         );
 
-        let output = trans_expr(input, &mut env, &mut errors, &mut id_generator);
+        let output = analyzer.trans_expr(input, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -486,14 +476,13 @@ mod tests {
         let expected_errors = vec![];
 
         assert_eq!(output, expected);
-        assert_eq!(errors, expected_errors);
+        assert_eq!(analyzer.errors, expected_errors);
     }
 
     #[test]
     fn type_error() {
+        let mut analyzer = Checker::new();
         let mut env = Environment::base();
-        let mut errors = vec![];
-        let mut id_generator = IdGenerator::new();
 
         let input = spanned(
             0,
@@ -512,7 +501,7 @@ mod tests {
             }),
         );
 
-        let output = trans_expr(input, &mut env, &mut errors, &mut id_generator);
+        let output = analyzer.trans_expr(input, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -525,7 +514,7 @@ mod tests {
         }];
 
         assert_eq!(output, expected);
-        assert_eq!(errors, expected_errors);
+        assert_eq!(analyzer.errors, expected_errors);
     }
 
     fn spanned<T>(start: usize, end: usize, value: T) -> Spanned<T> {
