@@ -48,3 +48,13 @@ pub enum RelOp {
     Ugt,
     Uge,
 }
+
+impl Expr {
+    pub fn mem(e: Expr) -> Self {
+        Expr::Mem(Box::new(e))
+    }
+    
+    pub fn sum(e1: Expr, e2: Expr) -> Self {
+        Expr::BinOp(BinOp::Plus, Box::new(e1), Box::new(e2))
+    }
+}

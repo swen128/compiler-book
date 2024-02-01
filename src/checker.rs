@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::temp::Label;
-use crate::translate::{alloc_local, Access, Level};
+use crate::translate::{alloc_local, simple_var, Level};
 
 use super::document::{Span, Spanned};
 use super::env::ValueEntry;
@@ -36,12 +36,12 @@ impl Checker {
     pub fn trans_expr<F: Frame + Clone + PartialEq>(
         &mut self,
         expr: Spanned<ast::Expr>,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         match expr.value {
             ast::Expr::Let(expr) => self.trans_let(expr, parent_level, env),
-            ast::Expr::LValue(var) => self.trans_var(*var, expr.span, env),
+            ast::Expr::LValue(var) => self.trans_var(*var, expr.span, parent_level, env),
             ast::Expr::Seq(exprs) => self.trans_seq(exprs, parent_level, env),
 
             ast::Expr::NoValue => TypedExpr {
@@ -52,8 +52,8 @@ impl Checker {
                 expr: todo!(),
                 ty: types::Ty::Nil,
             },
-            ast::Expr::Num(_) => TypedExpr {
-                expr: todo!(),
+            ast::Expr::Num(n) => TypedExpr {
+                expr: ir::Expr::Const(n as i64),
                 ty: types::Ty::Int,
             },
             ast::Expr::String(_) => TypedExpr {
@@ -83,7 +83,7 @@ impl Checker {
         &mut self,
         name: Spanned<ast::Id>,
         args: Vec<Spanned<ast::Expr>>,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         let signature = get_function(&name, env, &mut self.errors).cloned();
@@ -119,7 +119,7 @@ impl Checker {
         &mut self,
         expected_ty: types::Ty,
         expr: Spanned<ast::Expr>,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         let span = expr.span;
@@ -143,6 +143,7 @@ impl Checker {
         &mut self,
         var: ast::LValue,
         span: Span,
+        parent_level: &Level<F>,
         env: &Environment<F>,
     ) -> TypedExpr {
         match var {
@@ -155,8 +156,8 @@ impl Checker {
                         }])
                     },
                     |entry| match entry {
-                        ValueEntry::Variable { ty, .. } => Ok(TypedExpr {
-                            expr: todo!(),
+                        ValueEntry::Variable { ty, access } => Ok(TypedExpr {
+                            expr: simple_var(access, parent_level),
                             ty: ty.clone(),
                         }),
                         _ => Err(vec![SemanticError::UnexpectedFunction {
@@ -186,7 +187,7 @@ impl Checker {
     fn trans_seq<F: Frame + Clone + PartialEq>(
         &mut self,
         sub_exprs: Vec<Spanned<ast::Expr>>,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         let results = sub_exprs
@@ -211,7 +212,7 @@ impl Checker {
     fn trans_let<F: Frame + Clone + PartialEq>(
         &mut self,
         expr: ast::Let,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         let ast::Let { decs, body } = expr;
@@ -228,7 +229,7 @@ impl Checker {
     fn trans_dec<F: Frame + Clone + PartialEq>(
         &mut self,
         dec: Spanned<ast::Dec>,
-        parent_level: &Level<F>,
+        parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) {
         let span = dec.span;
@@ -256,7 +257,7 @@ impl Checker {
                     .cloned();
                 let rhs = self.trans_expr(*expr, parent_level, env);
                 let ty = declared_ty.unwrap_or(rhs.ty);
-                let access = alloc_local(&parent_level, escape);
+                let access = alloc_local(parent_level, escape);
 
                 env.values
                     .insert(symbol, ValueEntry::Variable { ty, access });
@@ -281,7 +282,7 @@ impl Checker {
 
                 let params_types = params.iter().map(|(_, ty, _)| ty.clone()).collect();
                 let typed_body = {
-                    let level = Level::<F>::new(
+                    let mut level = Level::<F>::new(
                         parent_level.clone(),
                         Label::new(),
                         params.iter().map(|(_, _, escape)| *escape).collect(),
@@ -289,7 +290,7 @@ impl Checker {
 
                     let mut scope = Scope::new(env);
                     for (symbol, ty, escape) in params {
-                        let access = alloc_local(&level, escape);
+                        let access = alloc_local(&mut level, escape);
 
                         scope
                             .values
@@ -480,15 +481,15 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::*, env::Environment, frame::Byte, ir, temp::Temp, types, Span, Spanned};
+    use crate::{ast::*, env::Environment, frame::RiscVFrame as Frame, types, Span, Spanned};
 
     use super::*;
 
     #[test]
     fn valid_variable() {
         let mut analyzer = Checker::new();
-        let mut env = Environment::<MockFrame>::base();
-        let level = Level::<MockFrame>::outermost();
+        let mut env = Environment::<Frame>::base();
+        let mut level = Level::<Frame>::outermost();
 
         let input = spanned(
             0,
@@ -507,7 +508,7 @@ mod tests {
             }),
         );
 
-        let output = analyzer.trans_expr(input, &level, &mut env);
+        let output = analyzer.trans_expr(input, &mut level, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -522,8 +523,8 @@ mod tests {
     #[test]
     fn type_error() {
         let mut analyzer = Checker::new();
-        let mut env = Environment::<MockFrame>::base();
-        let level = Level::<MockFrame>::outermost();
+        let mut env = Environment::<Frame>::base();
+        let mut level = Level::<Frame>::outermost();
 
         let input = spanned(
             0,
@@ -542,7 +543,7 @@ mod tests {
             }),
         );
 
-        let output = analyzer.trans_expr(input, &level, &mut env);
+        let output = analyzer.trans_expr(input, &mut level, &mut env);
 
         let expected = TypedExpr {
             expr: todo!(),
@@ -562,40 +563,40 @@ mod tests {
         Spanned::new(value, Span::new(start, end))
     }
 
-    #[derive(Clone, PartialEq)]
-    struct MockFrame {}
-
-    impl Frame for MockFrame {
-        type Access = MockAccess;
-
-        const WORD_SIZE: Byte = Byte(8);
-
-        fn new(name: Label, formals: Vec<bool>) -> Self {
-            todo!()
-        }
-
-        fn name(&self) -> String {
-            todo!()
-        }
-
-        fn formals(&self) -> Vec<Self::Access> {
-            todo!()
-        }
-
-        fn alloc_local(&mut self, escape: bool) -> Self::Access {
-            todo!()
-        }
-
-        fn exp(&self, access: Self::Access, stack_frame: ir::Expr) -> ir::Expr {
-            todo!()
-        }
-    }
-
-    struct MockAccess {}
-
-    impl crate::frame::Access for MockAccess {
-        fn expr(&self, frame_pointer: &Temp) -> ir::Expr {
-            todo!()
-        }
-    }
+    // #[derive(Clone, PartialEq)]
+    // struct MockFrame {}
+    //
+    // impl Frame for MockFrame {
+    //     type Access = MockAccess;
+    //
+    //     const WORD_SIZE: Byte = Byte(8);
+    //
+    //     fn new(name: Label, formals: Vec<bool>) -> Self {
+    //         todo!()
+    //     }
+    //
+    //     fn name(&self) -> Label {
+    //         todo!()
+    //     }
+    //
+    //     fn formals(&self) -> Vec<Self::Access> {
+    //         todo!()
+    //     }
+    //
+    //     fn alloc_local(&mut self, escape: bool) -> Self::Access {
+    //         todo!()
+    //     }
+    //
+    //     fn exp(&self, access: Self::Access, stack_frame: ir::Expr) -> ir::Expr {
+    //         todo!()
+    //     }
+    // }
+    //
+    // struct MockAccess {}
+    //
+    // impl crate::frame::Access for MockAccess {
+    //     fn expr(&self, frame_pointer: &Temp) -> ir::Expr {
+    //         todo!()
+    //     }
+    // }
 }

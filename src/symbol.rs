@@ -9,6 +9,12 @@ pub fn symbol(name: &str) -> Symbol {
     Symbol::from(name)
 }
 
+impl From<String> for Symbol {
+    fn from(name: String) -> Self {
+        Self { name }
+    }
+}
+
 impl From<&str> for Symbol {
     fn from(name: &str) -> Self {
         Self {

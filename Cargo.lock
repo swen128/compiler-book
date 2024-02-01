@@ -58,6 +58,7 @@ dependencies = [
  "chumsky",
  "indoc",
  "logos",
+ "once_cell",
  "pretty_assertions",
  "thiserror",
 ]
