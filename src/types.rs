@@ -17,6 +17,7 @@ impl Ty {
     pub fn is_subtype_of(&self, other: &Self) -> bool {
         match (self, other) {
             (Ty::Nil, Ty::Record(_, _)) => true,
+            (Ty::Unknown, _) => true,
             _ => self == other,
         }
     }

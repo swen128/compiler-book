@@ -1,8 +1,11 @@
-use crate::ir::Expr;
+use crate::frame::Byte;
+use crate::ir::{BinOp, Expr};
 
 use super::frame::Frame;
 
 use super::temp::Label;
+
+const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Level<F: Frame + Clone + PartialEq> {
@@ -50,6 +53,10 @@ pub fn alloc_local<F: Frame + Clone + PartialEq>(level: &mut Level<F>, escape: b
     }
 }
 
+pub fn unit() -> Expr {
+    Expr::Const(0)
+}
+
 /// Returns an IR expression representing a variable reference.
 ///
 /// ## Parameters
@@ -59,6 +66,29 @@ pub fn simple_var<F: Frame + Clone + PartialEq>(access: &Access<F>, level: &Leve
     level
         .frame
         .exp(&access.frame, resolve_static_link(level, &access.level))
+}
+
+pub fn array_index(array: Expr, index: Expr) -> Expr {
+    Expr::mem(Expr::sum(
+        array,
+        Expr::mul(index, Expr::Const(*ARRAY_ELEMENT_SIZE)),
+    ))
+}
+
+pub fn field_access(record: Expr, index: usize) -> Expr {
+    array_index(record, Expr::Const(index as i64))
+}
+
+pub fn literal_number(n: u64) -> Expr {
+    Expr::Const(n as i64)
+}
+
+pub fn function_call(label: Label, args: Vec<Expr>) -> Expr {
+    Expr::call(Expr::Name(label), args)
+}
+
+pub fn negation(expr: Expr) -> Expr {
+    Expr::sub(Expr::Const(0), expr)
 }
 
 fn resolve_static_link<F: Frame + Clone + PartialEq>(

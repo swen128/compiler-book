@@ -1,7 +1,10 @@
 use thiserror::Error;
 
 use crate::temp::Label;
-use crate::translate::{alloc_local, simple_var, Level};
+use crate::translate::{
+    alloc_local, array_index, field_access, function_call, literal_number, negation, simple_var,
+    unit, Level,
+};
 
 use super::document::{Span, Spanned};
 use super::env::ValueEntry;
@@ -45,7 +48,7 @@ impl Checker {
             ast::Expr::Seq(exprs) => self.trans_seq(exprs, parent_level, env),
 
             ast::Expr::NoValue => TypedExpr {
-                expr: todo!(),
+                expr: unit(),
                 ty: types::Ty::Unit,
             },
             ast::Expr::Nil => TypedExpr {
@@ -53,7 +56,7 @@ impl Checker {
                 ty: types::Ty::Nil,
             },
             ast::Expr::Num(n) => TypedExpr {
-                expr: ir::Expr::Const(n as i64),
+                expr: literal_number(n),
                 ty: types::Ty::Int,
             },
             ast::Expr::String(_) => TypedExpr {
@@ -68,8 +71,12 @@ impl Checker {
             ast::Expr::Array(_) => todo!(),
             ast::Expr::Record(_) => todo!(),
             ast::Expr::Assign(_) => todo!(),
-            ast::Expr::Neg(_) => {
-                self.trans_specific_type_expr(types::Ty::Int, expr, parent_level, env)
+            ast::Expr::Neg(arg) => {
+                let arg = self.trans_specific_type_expr(types::Ty::Int, *arg, parent_level, env);
+                TypedExpr {
+                    expr: negation(arg.expr),
+                    ty: types::Ty::Int,
+                }
             }
             ast::Expr::BiOp(_, _, _) => todo!(),
             ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
@@ -86,30 +93,35 @@ impl Checker {
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let signature = get_function(&name, env, &mut self.errors).cloned();
+        let args_typed = args
+            .into_iter()
+            .map(|arg| {
+                let span = arg.span;
+                Spanned::new(self.trans_expr(arg, parent_level, env), span)
+            })
+            .collect();
 
-        let args_typed = args.into_iter().map(|arg| {
-            let span = arg.span;
-            Spanned::new(self.trans_expr(arg, parent_level, env), span)
-        });
+        let signature = get_function(&name, env, &mut self.errors);
 
         // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
         let whole_args_span = name.span;
 
         match signature {
-            Some(FunctionSignature { params, result }) => {
+            Some((FunctionSignature { params, result }, label)) => {
                 let arg_type_errors =
-                    check_function_arg_types(&args_typed.collect(), &params, whole_args_span);
+                    check_function_arg_types(&args_typed, &params, whole_args_span);
                 self.errors.extend(arg_type_errors);
 
+                let translated_args = args_typed.into_iter().map(|arg| arg.value.expr).collect();
+
                 TypedExpr {
-                    expr: todo!(),
+                    expr: function_call(label.clone(), translated_args),
                     ty: result.clone(),
                 }
             }
 
             None => TypedExpr {
-                expr: todo!(),
+                expr: ir::Expr::Error,
                 ty: types::Ty::Unknown,
             },
         }
@@ -179,7 +191,28 @@ impl Checker {
                 }
             }
 
-            ast::LValue::RecordField(_, _) => todo!(),
+            ast::LValue::RecordField(lvalue, field) => {
+                let TypedExpr {
+                    expr: record,
+                    ty: record_ty,
+                } = self.trans_var(lvalue.value, lvalue.span, parent_level, env);
+
+                let resolved = lookup_field(record_ty, Symbol::from(field.value), span);
+
+                match resolved {
+                    Ok(ResolvedRecordField { index, ty }) => TypedExpr {
+                        expr: field_access(record, index),
+                        ty,
+                    },
+                    Err(err) => {
+                        self.errors.push(err);
+                        TypedExpr {
+                            expr: ir::Expr::Error,
+                            ty: types::Ty::Unknown,
+                        }
+                    }
+                }
+            }
             ast::LValue::ArrayIndex(_, _) => todo!(),
         }
     }
@@ -256,7 +289,13 @@ impl Checker {
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
                 let rhs = self.trans_expr(*expr, parent_level, env);
-                let ty = declared_ty.unwrap_or(rhs.ty);
+                let ty = match declared_ty.unwrap_or(rhs.ty) {
+                    Ty::Nil => {
+                        self.errors.push(SemanticError::UntypedNilError { span });
+                        Ty::Unknown
+                    }
+                    ty => ty,
+                };
                 let access = alloc_local(parent_level, escape);
 
                 env.values
@@ -299,11 +338,11 @@ impl Checker {
                     self.trans_expr(*body, parent_level, &mut scope)
                 };
 
-                let is_return_type_comatible = declared_return_ty
+                let is_return_type_compatible = declared_return_ty
                     .clone()
                     .map_or(true, |ty| typed_body.ty.is_subtype_of(&ty));
 
-                if !is_return_type_comatible {
+                if !is_return_type_compatible {
                     self.errors.push(SemanticError::TypeError {
                         expected: declared_return_ty.clone().unwrap(),
                         found: typed_body.ty.clone(),
@@ -316,6 +355,31 @@ impl Checker {
                     .insert(symbol, ValueEntry::func(params_types, return_ty));
             }
         }
+    }
+}
+
+struct ResolvedRecordField {
+    index: usize,
+    ty: Ty,
+}
+
+/// Tries to find the type of the given field in the given type.
+fn lookup_field(
+    ty: types::Ty,
+    field: Symbol,
+    span: Span,
+) -> Result<ResolvedRecordField, SemanticError> {
+    match ty {
+        types::Ty::Record(_, ref fields) => fields
+            .iter()
+            .enumerate()
+            .find(|(i, record_field)| record_field.key == field)
+            .map(|(i, record_field)| ResolvedRecordField {
+                index: i,
+                ty: record_field.ty.clone(),
+            })
+            .ok_or_else(|| SemanticError::UndefinedField { ty, field, span }),
+        _ => Err(SemanticError::UndefinedField { ty, field, span }),
     }
 }
 
@@ -408,16 +472,16 @@ fn check_function_arg_types(
     errors
 }
 
-/// Looks up the given function name in the environment and returns its signature.
+/// Looks up the given function name in the environment.
 fn get_function<'a, F: Frame + Clone + PartialEq>(
     name: &Spanned<ast::Id>,
     env: &'a Environment<F>,
     errors: &mut Vec<SemanticError>,
-) -> Option<&'a FunctionSignature> {
+) -> Option<(&'a FunctionSignature, &'a Label)> {
     let symbol = Symbol::from(&name.value);
 
     match env.values.get(&symbol) {
-        Some(ValueEntry::Function(signature)) => Some(signature),
+        Some(ValueEntry::Function { signature, label }) => Some((signature, label)),
         Some(ValueEntry::Variable { .. }) => {
             errors.push(SemanticError::UnexpectedVariable {
                 name: symbol.clone(),
@@ -444,6 +508,9 @@ pub enum SemanticError {
         span: Span,
     },
 
+    #[error("`nil` must be used in a context where its type can be determined.")]
+    UntypedNilError { span: Span },
+
     #[error("Undefined type: {name:?}")]
     UndefinedType { name: Symbol, span: Span },
 
@@ -452,6 +519,13 @@ pub enum SemanticError {
 
     #[error("Undefined function: {name:?}")]
     UndefinedFunction { name: Symbol, span: Span },
+
+    #[error("The type '{ty:?}' does not have the field '{field:?}'")]
+    UndefinedField {
+        ty: types::Ty,
+        field: Symbol,
+        span: Span,
+    },
 
     #[error("Attempted to use a function '{name:?}' as a variable")]
     UnexpectedFunction { name: Symbol, span: Span },
@@ -511,7 +585,7 @@ mod tests {
         let output = analyzer.trans_expr(input, &mut level, &mut env);
 
         let expected = TypedExpr {
-            expr: todo!(),
+            expr: ir::Expr::Const(1),
             ty: types::Ty::Int,
         };
         let expected_errors = vec![];

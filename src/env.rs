@@ -1,3 +1,5 @@
+use crate::temp::Label;
+
 use super::{
     frame::Frame,
     symbol::{symbol, Symbol, SymbolTable},
@@ -20,13 +22,22 @@ pub struct ValueTable<F: Frame + Clone + PartialEq> {
 }
 
 pub enum ValueEntry<F: Frame + Clone + PartialEq> {
-    Variable { ty: Ty, access: Access<F> },
-    Function(FunctionSignature),
+    Variable {
+        ty: Ty,
+        access: Access<F>,
+    },
+    Function {
+        signature: FunctionSignature,
+        label: Label,
+    },
 }
 
 impl<F: Frame + Clone + PartialEq> ValueEntry<F> {
     pub fn func(params: Vec<Ty>, result: Ty) -> Self {
-        Self::Function(FunctionSignature { params, result })
+        Self::Function {
+            signature: FunctionSignature { params, result },
+            label: Label::new(),
+        }
     }
 }
 

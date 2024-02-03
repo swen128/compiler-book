@@ -9,6 +9,8 @@ pub enum Expr {
     Mem(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     ESeq(Box<Statement>, Box<Expr>),
+    
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,5 +58,17 @@ impl Expr {
     
     pub fn sum(e1: Expr, e2: Expr) -> Self {
         Expr::BinOp(BinOp::Plus, Box::new(e1), Box::new(e2))
+    }
+    
+    pub fn sub(e1: Expr, e2: Expr) -> Self {
+        Expr::BinOp(BinOp::Minus, Box::new(e1), Box::new(e2))
+    }
+    
+    pub fn mul(e1: Expr, e2: Expr) -> Self {
+        Expr::BinOp(BinOp::Mul, Box::new(e1), Box::new(e2))
+    }
+    
+    pub fn call(e: Expr, args: Vec<Expr>) -> Self {
+        Expr::Call(Box::new(e), args)
     }
 }
