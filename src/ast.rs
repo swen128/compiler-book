@@ -53,7 +53,7 @@ pub enum LValue {
 /// An expression of the form: `<ty> [ <size> ] of <init>`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Array {
-    pub ty: IdNode,
+    pub ty: Spanned<TypeId>,
     pub size: Spanned<Expr>,
     pub init: Spanned<Expr>,
 }
@@ -61,7 +61,7 @@ pub struct Array {
 /// An expression of the form: `<ty> { <fields> }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
-    pub ty: IdNode,
+    pub ty: Spanned<TypeId>,
     pub fields: Vec<RecordField>,
 }
 
@@ -226,11 +226,11 @@ impl Expr {
         Expr::BiOp(op, Box::new(left), Box::new(right))
     }
 
-    pub fn array(ty: Spanned<Id>, size: Spanned<Expr>, init: Spanned<Expr>) -> Self {
+    pub fn array(ty: Spanned<TypeId>, size: Spanned<Expr>, init: Spanned<Expr>) -> Self {
         Expr::Array(Box::new(Array { ty, size, init }))
     }
 
-    pub fn record(ty: Spanned<Id>, fields: Vec<RecordField>) -> Self {
+    pub fn record(ty: Spanned<TypeId>, fields: Vec<RecordField>) -> Self {
         Expr::Record(Record { ty, fields })
     }
 

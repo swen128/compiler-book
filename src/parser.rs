@@ -45,6 +45,12 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
         .map_with_span(Spanned::new)
         .labelled("identifier");
 
+        let type_id = select! {
+            Token::Id(id) => TypeId(id.to_string()),
+        }
+        .map_with_span(Spanned::new)
+        .labelled("type identifier");
+
         let lvalue = lvalue_parser(expr.clone());
 
         let no_value = just([Token::LParen, Token::RParen]).to(Expr::NoValue);
@@ -66,7 +72,7 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
         let array_size = expr
             .clone()
             .delimited_by(just(Token::LBracket), just(Token::RBracket));
-        let array = id
+        let array = type_id
             .then(array_size)
             .then_ignore(just(Token::Of))
             .then(expr.clone())
@@ -77,7 +83,7 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
             .then_ignore(just(Token::Colon))
             .then(expr.clone())
             .map(|(key, value)| RecordField { key, value });
-        let record = id
+        let record = type_id
             .then(
                 record_field
                     .separated_by(just(Token::Comma))
