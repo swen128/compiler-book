@@ -2,8 +2,7 @@ use thiserror::Error;
 
 use crate::temp::Label;
 use crate::translate::{
-    alloc_local, array_index, field_access, function_call, literal_number, negation, simple_var,
-    unit, Level,
+    alloc_local, field_access, function_call, literal_number, negation, simple_var, unit, Level,
 };
 
 use super::document::{Span, Spanned};
@@ -23,7 +22,19 @@ pub struct TypedExpr {
     pub ty: types::Ty,
 }
 
-pub struct Checker {
+pub fn trans_program<F: Frame + Clone + PartialEq>(
+    program: ast::Program,
+) -> (TypedExpr, Vec<SemanticError>) {
+    let mut analyzer = Checker::new();
+    let mut env = Environment::<F>::base();
+    let mut level = Level::<F>::outermost();
+
+    let typed_expr = analyzer.trans_expr(program.0, &mut level, &mut env);
+
+    (typed_expr, analyzer.errors)
+}
+
+struct Checker {
     errors: Vec<SemanticError>,
     id_generator: IdGenerator,
 }
@@ -288,14 +299,29 @@ impl Checker {
                 let declared_ty = declared_ty
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
+                let rhs_span = expr.span;
                 let rhs = self.trans_expr(*expr, parent_level, env);
-                let ty = match declared_ty.unwrap_or(rhs.ty) {
-                    Ty::Nil => {
+
+                let ty = match (declared_ty, rhs.ty) {
+                    (Some(declared), rhs_ty) => {
+                        if !rhs_ty.is_subtype_of(&declared) {
+                            self.errors.push(SemanticError::TypeError {
+                                expected: declared.clone(),
+                                found: rhs_ty,
+                                span: rhs_span,
+                            });
+                        }
+                        declared
+                    }
+
+                    (None, Ty::Nil) => {
                         self.errors.push(SemanticError::UntypedNilError { span });
                         Ty::Unknown
                     }
-                    ty => ty,
+
+                    (None, rhs_ty) => rhs_ty,
                 };
+
                 let access = alloc_local(parent_level, escape);
 
                 env.values
@@ -555,17 +581,13 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::*, env::Environment, frame::RiscVFrame as Frame, types, Span, Spanned};
+    use crate::{ast::*, frame::RiscVFrame as Frame, types, Span, Spanned};
 
     use super::*;
 
     #[test]
     fn valid_variable() {
-        let mut analyzer = Checker::new();
-        let mut env = Environment::<Frame>::base();
-        let mut level = Level::<Frame>::outermost();
-
-        let input = spanned(
+        let input = Program(spanned(
             0,
             6,
             Expr::Let(Let {
@@ -580,27 +602,20 @@ mod tests {
                 )],
                 body: Box::new(spanned(5, 6, Expr::variable("x"))),
             }),
-        );
+        ));
 
-        let output = analyzer.trans_expr(input, &mut level, &mut env);
+        let (typed_expr, errors) = trans_program::<Frame>(input);
 
-        let expected = TypedExpr {
-            expr: ir::Expr::Const(1),
-            ty: types::Ty::Int,
-        };
+        let expected_ty = types::Ty::Int;
         let expected_errors = vec![];
 
-        assert_eq!(output, expected);
-        assert_eq!(analyzer.errors, expected_errors);
+        assert_eq!(typed_expr.ty, expected_ty);
+        assert_eq!(errors, expected_errors);
     }
 
     #[test]
     fn type_error() {
-        let mut analyzer = Checker::new();
-        let mut env = Environment::<Frame>::base();
-        let mut level = Level::<Frame>::outermost();
-
-        let input = spanned(
+        let input = Program(spanned(
             0,
             6,
             Expr::Let(Let {
@@ -615,62 +630,22 @@ mod tests {
                 )],
                 body: Box::new(spanned(5, 6, Expr::variable("x"))),
             }),
-        );
+        ));
 
-        let output = analyzer.trans_expr(input, &mut level, &mut env);
+        let (typed_expr, errors) = trans_program::<Frame>(input);
 
-        let expected = TypedExpr {
-            expr: todo!(),
-            ty: types::Ty::String,
-        };
+        let expected_ty = types::Ty::String;
         let expected_errors = vec![SemanticError::TypeError {
             expected: types::Ty::String,
             found: types::Ty::Int,
-            span: Span::new(0, 4),
+            span: Span::new(2, 3),
         }];
 
-        assert_eq!(output, expected);
-        assert_eq!(analyzer.errors, expected_errors);
+        assert_eq!(typed_expr.ty, expected_ty);
+        assert_eq!(errors, expected_errors);
     }
 
     fn spanned<T>(start: usize, end: usize, value: T) -> Spanned<T> {
         Spanned::new(value, Span::new(start, end))
     }
-
-    // #[derive(Clone, PartialEq)]
-    // struct MockFrame {}
-    //
-    // impl Frame for MockFrame {
-    //     type Access = MockAccess;
-    //
-    //     const WORD_SIZE: Byte = Byte(8);
-    //
-    //     fn new(name: Label, formals: Vec<bool>) -> Self {
-    //         todo!()
-    //     }
-    //
-    //     fn name(&self) -> Label {
-    //         todo!()
-    //     }
-    //
-    //     fn formals(&self) -> Vec<Self::Access> {
-    //         todo!()
-    //     }
-    //
-    //     fn alloc_local(&mut self, escape: bool) -> Self::Access {
-    //         todo!()
-    //     }
-    //
-    //     fn exp(&self, access: Self::Access, stack_frame: ir::Expr) -> ir::Expr {
-    //         todo!()
-    //     }
-    // }
-    //
-    // struct MockAccess {}
-    //
-    // impl crate::frame::Access for MockAccess {
-    //     fn expr(&self, frame_pointer: &Temp) -> ir::Expr {
-    //         todo!()
-    //     }
-    // }
 }
