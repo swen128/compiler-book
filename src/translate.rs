@@ -1,8 +1,7 @@
-use crate::frame::Byte;
-use crate::ir::{BinOp, Expr};
+use crate::checker::TypedExpr;
 
-use super::frame::Frame;
-
+use super::frame::{Byte, Frame};
+use super::ir::{Expr, Statement};
 use super::temp::Label;
 
 const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
@@ -89,6 +88,20 @@ pub fn function_call(label: Label, args: Vec<Expr>) -> Expr {
 
 pub fn negation(expr: Expr) -> Expr {
     Expr::sub(Expr::Const(0), expr)
+}
+
+pub fn sequence(exprs: &[TypedExpr], last: &TypedExpr) -> Expr {
+    exprs.into_iter().rfold(last.expr.clone(), |acc, expr| {
+        Expr::eseq(Statement::Exp(expr.expr.clone()), acc)
+    })
+}
+
+pub fn array_init(size: Expr, init: Expr) -> Expr {
+    todo!()
+}
+
+pub fn error() -> Expr {
+    Expr::Error
 }
 
 fn resolve_static_link<F: Frame + Clone + PartialEq>(
