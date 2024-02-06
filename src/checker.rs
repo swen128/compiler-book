@@ -2,18 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::types::RecordFields;
-
 use super::document::{Span, Spanned};
-use super::env::ValueEntry;
+use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{
     alloc_local, array_init, error, field_access, function_call, literal_number, negation,
-    sequence, simple_var, unit, Level,
+    sequence, simple_var, unit, Access, Level,
 };
-use super::types::{FunctionSignature, IdGenerator, Ty};
+use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
     ast,
     env::{Environment, Scope, TypeTable},
@@ -214,17 +212,6 @@ impl Checker {
         }
     }
 
-    fn lookup_type(&mut self, type_id: Spanned<ast::TypeId>, env: &TypeTable) -> types::Ty {
-        let symbol = Symbol::from(&type_id.value);
-        env.get(&symbol).cloned().unwrap_or_else(|| {
-            self.errors.push(SemanticError::UndefinedType {
-                name: symbol,
-                span: type_id.span,
-            });
-            types::Ty::Unknown
-        })
-    }
-
     fn trans_func_call<F: Frame + Clone + PartialEq>(
         &mut self,
         name: Spanned<ast::Id>,
@@ -240,7 +227,7 @@ impl Checker {
             })
             .collect();
 
-        let signature = get_function(&name, env, &mut self.errors);
+        let signature = self.lookup_function(&name, env);
 
         // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
         let whole_args_span = name.span;
@@ -514,6 +501,41 @@ impl Checker {
             }
         }
     }
+
+    fn lookup_type(&mut self, type_id: Spanned<ast::TypeId>, env: &TypeTable) -> types::Ty {
+        lookup_type(&type_id, &env).unwrap_or_else(|err| {
+            self.errors.push(err);
+            types::Ty::Unknown
+        })
+    }
+
+    fn lookup_variable<F: Frame + Clone + PartialEq>(
+        &mut self,
+        id: &Spanned<ast::Id>,
+        env: &ValueTable<F>,
+    ) -> Option<(&Ty, &Access<F>)> {
+        match lookup_variable(id, env) {
+            Ok((ty, access)) => Some((ty, access)),
+            Err(err) => {
+                self.errors.push(err);
+                None
+            }
+        }
+    }
+
+    fn lookup_function<'a, F: Frame + Clone + PartialEq>(
+        &mut self,
+        name: &Spanned<ast::Id>,
+        env: &'a Environment<F>,
+    ) -> Option<(&'a FunctionSignature, &'a Label)> {
+        match lookup_function(name, env) {
+            Ok(function) => Some(function),
+            Err(err) => {
+                self.errors.push(err);
+                None
+            }
+        }
+    }
 }
 
 struct ResolvedRecordField {
@@ -538,6 +560,60 @@ fn lookup_field(
 
         _ => Err(SemanticError::UndefinedField { ty, field, span }),
     }
+}
+
+fn lookup_variable<'a, F: Frame + Clone + PartialEq>(
+    id: &Spanned<ast::Id>,
+    env: &'a ValueTable<F>,
+) -> Result<(&'a Ty, &'a Access<F>), SemanticError> {
+    let symbol = Symbol::from(&id.value);
+    env.get(&symbol)
+        .map(|entry| match entry {
+            ValueEntry::Variable { ty, access } => Ok((ty, access)),
+            ValueEntry::Function { .. } => Err(SemanticError::UnexpectedFunction {
+                name: symbol,
+                span: id.span,
+            }),
+        })
+        .unwrap_or_else(|| {
+            Err(SemanticError::UndefinedVariable {
+                name: symbol,
+                span: id.span,
+            })
+        })
+}
+
+/// Looks up the given function name in the environment.
+fn lookup_function<'a, F: Frame + Clone + PartialEq>(
+    name: &Spanned<ast::Id>,
+    env: &'a Environment<F>,
+) -> Result<(&'a FunctionSignature, &'a Label), SemanticError> {
+    let symbol = Symbol::from(&name.value);
+
+    match env.values.get(&symbol) {
+        Some(ValueEntry::Function { signature, label }) => Ok((signature, label)),
+        Some(ValueEntry::Variable { .. }) => Err(SemanticError::UnexpectedVariable {
+            name: symbol.clone(),
+            span: name.span,
+        }),
+        None => Err(SemanticError::UndefinedFunction {
+            name: symbol.clone(),
+            span: name.span,
+        }),
+    }
+}
+
+fn lookup_type(
+    type_id: &Spanned<ast::TypeId>,
+    env: &TypeTable,
+) -> Result<types::Ty, SemanticError> {
+    let symbol = Symbol::from(&type_id.value);
+    env.get(&symbol)
+        .cloned()
+        .ok_or_else(|| SemanticError::UndefinedType {
+            name: symbol,
+            span: type_id.span,
+        })
 }
 
 fn trans_function_params(
@@ -676,33 +752,6 @@ fn check_record_fields(
     }
 
     errors
-}
-
-/// Looks up the given function name in the environment.
-fn get_function<'a, F: Frame + Clone + PartialEq>(
-    name: &Spanned<ast::Id>,
-    env: &'a Environment<F>,
-    errors: &mut Vec<SemanticError>,
-) -> Option<(&'a FunctionSignature, &'a Label)> {
-    let symbol = Symbol::from(&name.value);
-
-    match env.values.get(&symbol) {
-        Some(ValueEntry::Function { signature, label }) => Some((signature, label)),
-        Some(ValueEntry::Variable { .. }) => {
-            errors.push(SemanticError::UnexpectedVariable {
-                name: symbol.clone(),
-                span: name.span,
-            });
-            None
-        }
-        None => {
-            errors.push(SemanticError::UndefinedFunction {
-                name: symbol.clone(),
-                span: name.span,
-            });
-            None
-        }
-    }
 }
 
 #[derive(Error, Debug, Clone, PartialEq)]
