@@ -2,14 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
+use crate::translate::if_then_else;
+
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{
-    alloc_local, array_init, error, field_access, function_call, literal_number, negation,
-    sequence, simple_var, unit, Access, Level,
+    alloc_local, array_init, assignment, error, field_access, function_call, if_then,
+    literal_number, negation, sequence, simple_var, unit, Access, Level,
 };
 use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
@@ -85,7 +87,7 @@ impl Checker {
 
             ast::Expr::Array(array) => self.trans_array(*array, parent_level, env),
             ast::Expr::Record(record) => self.trans_record(record, parent_level, env),
-            ast::Expr::Assign(_) => todo!(),
+            ast::Expr::Assign(assign) => self.trans_assign(*assign, parent_level, env),
             ast::Expr::Neg(arg) => {
                 let arg = self.trans_specific_type_expr(types::Ty::Int, *arg, parent_level, env);
                 TypedExpr {
@@ -95,9 +97,51 @@ impl Checker {
             }
             ast::Expr::BiOp(_, _, _) => todo!(),
             ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
-            ast::Expr::If(_) => todo!(),
+            ast::Expr::If(if_) => self.trans_if(*if_, parent_level, env),
             ast::Expr::While(_) => todo!(),
             ast::Expr::For(_) => todo!(),
+        }
+    }
+
+    fn trans_if<F: Frame + Clone + PartialEq>(
+        &mut self,
+        if_: ast::If,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
+        let ast::If { cond, then, else_ } = if_;
+        let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
+
+        if let Some(else_) = else_ {
+            let else_span = else_.span.clone();
+
+            let then = self.trans_expr(then, parent_level, env);
+            let else_ = self.trans_expr(else_, parent_level, env);
+            let ty = Ty::common_type(&then.ty, &else_.ty);
+
+            match ty {
+                Some(ty) => TypedExpr {
+                    expr: if_then_else(cond.expr, then.expr, else_.expr),
+                    ty,
+                },
+                None => {
+                    self.errors.push(SemanticError::TypeError {
+                        expected: then.ty.clone(),
+                        found: else_.ty.clone(),
+                        span: else_span,
+                    });
+                    TypedExpr {
+                        expr: error(),
+                        ty: Ty::Unknown,
+                    }
+                }
+            }
+        } else {
+            let then = self.trans_specific_type_expr(Ty::Unit, then, parent_level, env);
+            TypedExpr {
+                expr: if_then(cond.expr, then.expr),
+                ty: Ty::Unit,
+            }
         }
     }
 
@@ -212,6 +256,35 @@ impl Checker {
         }
     }
 
+    fn trans_assign<F: Frame + Clone + PartialEq>(
+        &mut self,
+        assign: ast::Assign,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
+        let ast::Assign { lhs, rhs } = assign;
+        let rhs_span = rhs.span;
+        let lhs = self.trans_var(lhs.value, lhs.span, parent_level, env);
+        let rhs = self.trans_expr(rhs, parent_level, env);
+
+        if rhs.ty.is_subtype_of(&lhs.ty) {
+            TypedExpr {
+                expr: assignment(lhs.expr, rhs.expr),
+                ty: types::Ty::Unit,
+            }
+        } else {
+            self.errors.push(SemanticError::TypeError {
+                expected: lhs.ty.clone(),
+                found: rhs.ty.clone(),
+                span: rhs_span,
+            });
+            TypedExpr {
+                expr: error(),
+                ty: types::Ty::Unit,
+            }
+        }
+    }
+
     fn trans_func_call<F: Frame + Clone + PartialEq>(
         &mut self,
         name: Spanned<ast::Id>,
@@ -270,13 +343,13 @@ impl Checker {
             }
         } else {
             self.errors.push(SemanticError::TypeError {
-                expected: expected_ty,
+                expected: expected_ty.clone(),
                 found: found_ty,
                 span,
             });
             TypedExpr {
                 expr: error(),
-                ty: types::Ty::Unknown,
+                ty: expected_ty,
             }
         }
     }
@@ -509,11 +582,11 @@ impl Checker {
         })
     }
 
-    fn lookup_variable<F: Frame + Clone + PartialEq>(
+    fn lookup_variable<'a, F: Frame + Clone + PartialEq>(
         &mut self,
         id: &Spanned<ast::Id>,
-        env: &ValueTable<F>,
-    ) -> Option<(&Ty, &Access<F>)> {
+        env: &'a ValueTable<F>,
+    ) -> Option<(&'a Ty, &'a Access<F>)> {
         match lookup_variable(id, env) {
             Ok((ty, access)) => Some((ty, access)),
             Err(err) => {
@@ -571,7 +644,7 @@ fn lookup_variable<'a, F: Frame + Clone + PartialEq>(
         .map(|entry| match entry {
             ValueEntry::Variable { ty, access } => Ok((ty, access)),
             ValueEntry::Function { .. } => Err(SemanticError::UnexpectedFunction {
-                name: symbol,
+                name: symbol.clone(),
                 span: id.span,
             }),
         })

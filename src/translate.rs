@@ -100,6 +100,18 @@ pub fn array_init(size: Expr, init: Expr) -> Expr {
     todo!()
 }
 
+pub fn assignment(dst: Expr, src: Expr) -> Expr {
+    Expr::eseq(Statement::Move { src, dst }, unit())
+}
+
+pub fn if_then(cond: Expr, then: Expr) -> Expr {
+    todo!()
+}
+
+pub fn if_then_else(cond: Expr, then: Expr, else_: Expr) -> Expr {
+    todo!()
+}
+
 pub fn error() -> Expr {
     Expr::Error
 }

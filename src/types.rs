@@ -24,6 +24,16 @@ impl Ty {
         Self::Record(UniqueId::new(), RecordFields::new(fields))
     }
 
+    pub fn common_type(a: &Self, b: &Self) -> Option<Self> {
+        if a.is_subtype_of(b) {
+            Some(b.clone())
+        } else if b.is_subtype_of(a) {
+            Some(a.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn is_subtype_of(&self, other: &Self) -> bool {
         match (self, other) {
             (Ty::Nil, Ty::Record(_, _)) => true,
@@ -65,7 +75,7 @@ impl RecordFields {
     pub fn get(&self, key: &Symbol) -> Option<&(usize, Ty)> {
         self.0.get(key)
     }
-    
+
     pub fn keys(&self) -> impl Iterator<Item = &Symbol> {
         self.0.keys()
     }
@@ -104,5 +114,77 @@ impl IdGenerator {
         let id = self.counter;
         self.counter += 1;
         UniqueId(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::symbol::symbol;
+
+    use super::*;
+
+    #[test]
+    fn test_common_ancestor() {
+        let int = Ty::Int;
+        let string = Ty::String;
+        let record_a = Ty::record([(symbol("foo"), Ty::Int)].into_iter());
+        let record_b = Ty::record([(symbol("bar"), Ty::Int)].into_iter());
+        let array_a = Ty::array(Ty::Int);
+        let array_b = Ty::array(Ty::String);
+        let nil = Ty::Nil;
+        let unknown = Ty::Unknown;
+
+        same_type(&int);
+        same_type(&string);
+        same_type(&record_a);
+        same_type(&array_a);
+        same_type(&nil);
+        same_type(&unknown);
+
+        case(&int, &string, None);
+        case(&int, &record_a, None);
+        case(&int, &array_a, None);
+        case(&int, &nil, None);
+
+        case(&string, &record_a, None);
+        case(&string, &array_a, None);
+        case(&string, &nil, None);
+
+        case(&record_a, &record_b, None);
+        case(&record_a, &array_a, None);
+
+        case(&array_a, &array_b, None);
+        case(&array_a, &nil, None);
+
+        case(&nil, &record_a, Some(&record_a));
+
+        case(&int, &unknown, Some(&int));
+        case(&string, &unknown, Some(&string));
+        case(&record_a, &unknown, Some(&record_a));
+        case(&array_a, &unknown, Some(&array_a));
+        case(&nil, &unknown, Some(&nil));
+
+        fn case(a: &Ty, b: &Ty, expected: Option<&Ty>) {
+            assert_eq!(
+                Ty::common_type(a, b),
+                expected.cloned(),
+                "The common type of ({:?}, {:?}) is {:?}",
+                a,
+                b,
+                expected
+            );
+            assert_eq!(
+                Ty::common_type(b, a),
+                expected.cloned(),
+                "The common type of ({:?}, {:?}) is {:?}",
+                b,
+                a,
+                expected
+            );
+        }
+
+        fn same_type(ty: &Ty) {
+            assert_eq!(Ty::common_type(ty, ty), Some(ty.clone()));
+        }
     }
 }
