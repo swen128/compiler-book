@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::translate::if_then_else;
+use crate::translate::{self, if_then_else};
 
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
@@ -20,9 +20,8 @@ use super::{
     ir, types,
 };
 
-#[derive(Debug, Clone, PartialEq)]
 pub struct TypedExpr {
-    pub expr: ir::Expr,
+    pub expr: translate::Expr,
     pub ty: types::Ty,
 }
 
@@ -311,7 +310,7 @@ impl Checker {
                     check_function_arg_types(&args_typed, &params, whole_args_span);
                 self.errors.extend(arg_type_errors);
 
-                let translated_args = args_typed.into_iter().map(|arg| arg.value.expr).collect();
+                let translated_args = args_typed.into_iter().map(|arg| arg.value.expr);
 
                 TypedExpr {
                     expr: function_call(label.clone(), translated_args),

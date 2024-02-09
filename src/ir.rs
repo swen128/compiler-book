@@ -20,7 +20,16 @@ pub enum Statement {
         dst: Expr,
     },
     Exp(Expr),
-    Jump(Expr, Vec<Label>),
+    
+    /// Jump to the address of evaluated value of `dst`.
+    Jump {
+        /// Either a literal label `Expr::Name(Label)`, or an address calculated by arbitrary expression.
+        dst: Expr,
+        /// All the possible locations that this statement can jump to.
+        /// Necessary for dataflow anaylsis.
+        possible_locations: Vec<Label>,
+    },
+
     CJump {
         op: RelOp,
         left: Expr,
@@ -30,6 +39,8 @@ pub enum Statement {
     },
     Seq(Box<Statement>, Box<Statement>),
     Label(Label),
+    
+    Noop,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,5 +97,23 @@ impl Expr {
 
     pub fn eseq(s: Statement, e: Expr) -> Self {
         Expr::ESeq(Box::new(s), Box::new(e))
+    }
+    
+    pub fn new_temp() -> Self {
+        Expr::Temp(Temp::new())
+    }
+}
+
+impl Statement {
+    pub fn seq(head: Statement, rest: Vec<Statement>) -> Self {
+        rest.into_iter()
+            .fold(head, |acc, s| Statement::Seq(Box::new(acc), Box::new(s)))
+    }
+    
+    pub fn jump_to_label(label: Label) -> Self {
+        Statement::Jump {
+            dst: Expr::Name(label.clone()),
+            possible_locations: vec![label],
+        }
     }
 }
