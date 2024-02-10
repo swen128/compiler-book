@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
+use crate::translate::nil;
+
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
@@ -66,7 +68,7 @@ impl Checker {
                 ty: types::Ty::Unit,
             },
             ast::Expr::Nil => TypedExpr {
-                expr: todo!(),
+                expr: nil(),
                 ty: types::Ty::Nil,
             },
             ast::Expr::Num(n) => TypedExpr {

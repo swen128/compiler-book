@@ -200,6 +200,10 @@ pub fn unit() -> Expr {
     Expr::Nx(ir::Statement::Noop)
 }
 
+pub fn nil() -> Expr {
+    Expr::Ex(ir::Expr::Const(0))
+}
+
 /// Returns an IR expression representing a variable reference.
 ///
 /// ## Parameters
