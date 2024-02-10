@@ -45,6 +45,10 @@ impl Ty {
             _ => self == other,
         }
     }
+
+    pub fn is_comparable_to(&self, other: &Self) -> bool {
+        self != &Ty::Unknown && other != &Ty::Unknown && Self::common_type(self, other).is_some()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

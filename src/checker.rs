@@ -2,22 +2,20 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::translate::{self, if_then_else};
-
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{
-    alloc_local, array_init, assignment, error, field_access, function_call, if_then,
-    literal_number, negation, sequence, simple_var, unit, Access, Level,
+    self, alloc_local, array_init, assignment, binary_operator, error, field_access, function_call,
+    if_then, if_then_else, literal_number, negation, sequence, simple_var, unit, Access, Level,
 };
 use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
     ast,
     env::{Environment, Scope, TypeTable},
-    ir, types,
+    types,
 };
 
 pub struct TypedExpr {
@@ -94,11 +92,78 @@ impl Checker {
                     ty: types::Ty::Int,
                 }
             }
-            ast::Expr::BiOp(_, _, _) => todo!(),
+            ast::Expr::BiOp(op, left, right) => {
+                self.trans_binary_operator(op.value, *left, *right, parent_level, env)
+            }
             ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
             ast::Expr::If(if_) => self.trans_if(*if_, parent_level, env),
             ast::Expr::While(_) => todo!(),
             ast::Expr::For(_) => todo!(),
+        }
+    }
+
+    fn trans_binary_operator<F: Frame + Clone + PartialEq>(
+        &mut self,
+        op: ast::BiOp,
+        left: Spanned<ast::Expr>,
+        right: Spanned<ast::Expr>,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
+        use ast::BiOp::*;
+
+        let left_span = left.span.clone();
+        let right_span = right.span.clone();
+        let left = self.trans_expr(left, parent_level, env);
+        let right = self.trans_expr(right, parent_level, env);
+
+        let is_correct_type = left.ty != types::Ty::Unknown
+            && right.ty != types::Ty::Unknown
+            && match &op {
+                Eq | Neq => {
+                    if left.ty.is_comparable_to(&right.ty) {
+                        true
+                    } else {
+                        self.errors.push(SemanticError::TypeError {
+                            expected: left.ty.clone(),
+                            found: right.ty.clone(),
+                            span: right_span,
+                        });
+                        false
+                    }
+                }
+                Plus | Minus | Mul | Div | Lt | Le | Gt | Ge | And | Or => {
+                    let left_ok = left.ty == types::Ty::Int;
+                    let right_ok = right.ty == types::Ty::Int;
+
+                    if !left_ok {
+                        self.errors.push(SemanticError::TypeError {
+                            expected: types::Ty::Int,
+                            found: left.ty.clone(),
+                            span: left_span,
+                        });
+                    }
+                    if !right_ok {
+                        self.errors.push(SemanticError::TypeError {
+                            expected: types::Ty::Int,
+                            found: right.ty.clone(),
+                            span: right_span,
+                        });
+                    }
+
+                    left_ok && right_ok
+                }
+            };
+
+        let expr = if is_correct_type {
+            binary_operator(op, left.expr, right.expr)
+        } else {
+            error()
+        };
+
+        TypedExpr {
+            expr,
+            ty: types::Ty::Int,
         }
     }
 

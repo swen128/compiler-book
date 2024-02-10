@@ -1,10 +1,19 @@
-use crate::checker::TypedExpr;
-
+use super::ast;
+use super::checker::TypedExpr;
 use super::frame::{Byte, Frame};
 use super::ir::{self, Statement};
 use super::temp::Label;
 
 const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
+
+impl ir::Expr {
+    const TRUE: Self = Self::Const(1);
+    const FALSE: Self = Self::Const(0);
+
+    fn is_truthy(self) -> Condition {
+        Condition::Binary(ir::RelOp::Ne, self, Self::FALSE)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -17,38 +26,10 @@ pub enum Expr {
     Cx(Condition),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Condition {
-    Binary(ir::RelOp, ir::Expr, ir::Expr),
-    Always(ir::Statement),
-    Never(ir::Statement),
-}
-
-impl Condition {
-    fn build_statement(self, true_label: Label, false_label: Label) -> ir::Statement {
-        match self {
-            Condition::Binary(op, left, right) => ir::Statement::CJump {
-                op,
-                left,
-                right,
-                if_true: true_label,
-                if_false: false_label,
-            },
-            Condition::Always(statement) => {
-                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(true_label)])
-            }
-            Condition::Never(statement) => {
-                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(false_label)])
-            }
-        }
-    }
-    
-    fn non_zero(expr: ir::Expr) -> Self {
-        Condition::Binary(ir::RelOp::Ne, expr, ir::Expr::Const(0))
-    }
-}
-
 impl Expr {
+    const TRUE: Self = Self::Ex(ir::Expr::TRUE);
+    const FALSE: Self = Self::Ex(ir::Expr::FALSE);
+
     pub fn un_ex(self) -> ir::Expr {
         match self {
             Expr::Ex(expr) => expr,
@@ -65,16 +46,16 @@ impl Expr {
                     ir::Statement::seq(
                         ir::Statement::Move {
                             dst: tmp.clone(),
-                            src: ir::Expr::Const(1),
+                            src: ir::Expr::TRUE,
                         },
                         vec![
                             condition.build_statement(true_label.clone(), false_label.clone()),
-                            ir::Statement::Label(false_label.clone()),
+                            ir::Statement::Label(false_label),
                             ir::Statement::Move {
                                 dst: tmp.clone(),
-                                src: ir::Expr::Const(0),
+                                src: ir::Expr::FALSE,
                             },
-                            ir::Statement::Label(true_label.clone()),
+                            ir::Statement::Label(true_label),
                         ],
                     ),
                     tmp,
@@ -106,7 +87,7 @@ impl Expr {
 
     fn un_cx(self) -> Condition {
         match self {
-            Expr::Ex(e) => Condition::non_zero(e),
+            Expr::Ex(e) => e.is_truthy(),
             Expr::Nx(statement) => Condition::Always(statement),
             Expr::Cx(f) => f,
         }
@@ -114,6 +95,58 @@ impl Expr {
 
     fn constant(n: i64) -> Self {
         Expr::Ex(ir::Expr::Const(n))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Condition {
+    Binary(ir::RelOp, ir::Expr, ir::Expr),
+    Always(ir::Statement),
+    Never(ir::Statement),
+
+    And(Box<Condition>, Box<Condition>),
+    Or(Box<Condition>, Box<Condition>),
+}
+
+impl Condition {
+    fn build_statement(self, true_label: Label, false_label: Label) -> ir::Statement {
+        match self {
+            Condition::Binary(op, left, right) => ir::Statement::CJump {
+                op,
+                left,
+                right,
+                if_true: true_label,
+                if_false: false_label,
+            },
+            Condition::Always(statement) => {
+                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(true_label)])
+            }
+            Condition::Never(statement) => {
+                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(false_label)])
+            }
+
+            Condition::And(left, right) => {
+                let mid_label = Label::new();
+                ir::Statement::seq(
+                    left.build_statement(mid_label.clone(), false_label.clone()),
+                    vec![
+                        ir::Statement::Label(mid_label),
+                        right.build_statement(true_label, false_label),
+                    ],
+                )
+            }
+
+            Condition::Or(left, right) => {
+                let mid_label = Label::new();
+                ir::Statement::seq(
+                    left.build_statement(true_label.clone(), mid_label.clone()),
+                    vec![
+                        ir::Statement::Label(mid_label),
+                        right.build_statement(true_label, false_label),
+                    ],
+                )
+            }
+        }
     }
 }
 
@@ -227,11 +260,92 @@ pub fn assignment(dst: Expr, src: Expr) -> Expr {
 }
 
 pub fn if_then(cond: Expr, then: Expr) -> Expr {
-    todo!()
+    let true_label = Label::new();
+    let false_label = Label::new();
+
+    Expr::Nx(ir::Statement::seq(
+        cond.un_cx()
+            .build_statement(true_label.clone(), false_label.clone()),
+        vec![
+            ir::Statement::Label(true_label),
+            then.un_nx(),
+            ir::Statement::Label(false_label),
+        ],
+    ))
 }
 
 pub fn if_then_else(cond: Expr, then: Expr, else_: Expr) -> Expr {
-    todo!()
+    Expr::Ex(if_then_else_(cond.un_cx(), then.un_ex(), else_.un_ex()))
+}
+
+fn if_then_else_(cond: Condition, then: ir::Expr, else_: ir::Expr) -> ir::Expr {
+    let tmp = ir::Expr::new_temp();
+
+    let true_label = Label::new();
+    let false_label = Label::new();
+    let done_label = Label::new();
+
+    ir::Expr::eseq(
+        ir::Statement::seq(
+            cond.build_statement(true_label.clone(), false_label.clone()),
+            vec![
+                ir::Statement::Label(true_label),
+                ir::Statement::Move {
+                    dst: tmp.clone(),
+                    src: then,
+                },
+                ir::Statement::jump_to_label(done_label.clone()),
+                ir::Statement::Label(false_label),
+                ir::Statement::Move {
+                    dst: tmp.clone(),
+                    src: else_,
+                },
+                ir::Statement::Label(done_label),
+            ],
+        ),
+        tmp,
+    )
+}
+
+pub fn binary_operator(op: ast::BiOp, left: Expr, right: Expr) -> Expr {
+    match op {
+        ast::BiOp::Plus => int_operator(ir::BinOp::Plus, left, right),
+        ast::BiOp::Minus => int_operator(ir::BinOp::Minus, left, right),
+        ast::BiOp::Mul => int_operator(ir::BinOp::Mul, left, right),
+        ast::BiOp::Div => int_operator(ir::BinOp::Div, left, right),
+
+        ast::BiOp::And => boolean_and_operator(left, right),
+        ast::BiOp::Or => boolean_or_operator(left, right),
+
+        ast::BiOp::Eq => relation_operator(ir::RelOp::Eq, left, right),
+        ast::BiOp::Neq => relation_operator(ir::RelOp::Ne, left, right),
+        ast::BiOp::Lt => relation_operator(ir::RelOp::Lt, left, right),
+        ast::BiOp::Le => relation_operator(ir::RelOp::Le, left, right),
+        ast::BiOp::Gt => relation_operator(ir::RelOp::Gt, left, right),
+        ast::BiOp::Ge => relation_operator(ir::RelOp::Ge, left, right),
+    }
+}
+
+fn relation_operator(op: ir::RelOp, left: Expr, right: Expr) -> Expr {
+    Expr::Cx(Condition::Binary(op, left.un_ex(), right.un_ex()))
+}
+
+fn int_operator(op: ir::BinOp, left: Expr, right: Expr) -> Expr {
+    Expr::Ex(ir::Expr::binop(op, left.un_ex(), right.un_ex()))
+}
+
+fn boolean_and_operator(left: Expr, right: Expr) -> Expr {
+    Expr::Cx(Condition::And(
+        Box::new(left.un_cx()),
+        Box::new(right.un_cx()),
+    ))
+}
+
+fn boolean_or_operator(left: Expr, right: Expr) -> Expr {
+    Expr::Cx(Condition::Or(
+        Box::new(left.un_cx()),
+        Box::new(right.un_cx()),
+    ))
 }
 
 pub fn error() -> Expr {

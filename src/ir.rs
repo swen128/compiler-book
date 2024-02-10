@@ -49,7 +49,9 @@ pub enum BinOp {
     Minus,
     Mul,
     Div,
+    /// Bitwise `and` operator
     And,
+    /// Bitwise `or` operator
     Or,
     LShift,
     RShift,
@@ -97,6 +99,10 @@ impl Expr {
 
     pub fn eseq(s: Statement, e: Expr) -> Self {
         Expr::ESeq(Box::new(s), Box::new(e))
+    }
+    
+    pub fn binop(op: BinOp, left: Expr, right: Expr) -> Self {
+        Expr::BinOp(op, Box::new(left), Box::new(right))
     }
     
     pub fn new_temp() -> Self {
