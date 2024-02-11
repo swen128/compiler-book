@@ -274,12 +274,16 @@ pub fn array_init(size: Expr, init: Expr) -> Expr {
     todo!()
 }
 
+pub fn record_init(fields: impl IntoIterator<Item = Expr>) -> Expr {
+    todo!()
+}
+
 pub fn variable_initialization<F: Frame + Clone + PartialEq>(
     level: &Level<F>,
     variable_access: &Access<F>,
     value: Expr,
 ) -> Expr {
-    let frame_pointer = ir::Expr::Temp(F::fp().clone());
+    let frame_pointer = ir::Expr::Temp(F::frame_pointer().clone());
 
     Expr::Nx(ir::Statement::Move {
         dst: level.frame.exp(&variable_access.frame, frame_pointer),
@@ -534,6 +538,17 @@ pub fn string_literal<F: Frame + Clone + PartialEq>(str: String) -> (Expr, Fragm
     )
 }
 
+pub fn function_definition<F: Frame + Clone + PartialEq>(
+    level: &mut Level<F>,
+    body: Expr,
+) -> Fragment<F> {
+    let frame = level.frame.clone();
+    Fragment::Function {
+        body: frame.proc_entry_exit1(body.un_nx()),
+        frame,
+    }
+}
+
 pub fn error() -> Expr {
     Expr::Ex(ir::Expr::Error)
 }
@@ -552,7 +567,7 @@ fn resolve_static_link<F: Frame + Clone + PartialEq>(
     // |   arg 1     | /
     // | static link |  <- Frame Pointer
 
-    let mut var = ir::Expr::Temp(F::fp().clone());
+    let mut var = ir::Expr::Temp(F::frame_pointer().clone());
     let mut current_level = level_referenced;
 
     while current_level != level_declared {

@@ -671,15 +671,14 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
                 let params = trans_function_params(params, &env.types, &mut self.errors);
-
                 let params_types = params.iter().map(|(_, ty, _)| ty.clone()).collect();
-                let typed_body = {
-                    let mut level = Level::<F>::new(
-                        parent_level.clone(),
-                        Label::new(),
-                        params.iter().map(|(_, _, escape)| *escape).collect(),
-                    );
 
+                let mut level = Level::<F>::new(
+                    parent_level.clone(),
+                    Label::new(),
+                    params.iter().map(|(_, _, escape)| *escape).collect(),
+                );
+                let typed_body = {
                     let mut scope = Scope::new(env);
                     for (symbol, ty, escape) in params {
                         let access = alloc_local(&mut level, escape);
@@ -707,7 +706,8 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 env.values
                     .insert(symbol, ValueEntry::func(params_types, return_ty));
 
-                // TODO: Add the function body definition to the fragments.
+                let fragment = function_definition(&mut level, typed_body.expr);
+                self.fragments.push(fragment);
 
                 None
             }

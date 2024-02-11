@@ -24,7 +24,9 @@ pub trait Frame {
     ///              formal parameters escapes or not.
     fn new(name: Label, formals: Vec<bool>) -> Self;
 
-    fn fp() -> &'static Temp;
+    fn frame_pointer() -> &'static Temp;
+
+    fn return_value_location() -> &'static Temp;
 
     /// Returns the name of the function associated with this frame.
     fn name(&self) -> Label;
@@ -43,6 +45,8 @@ pub trait Frame {
     /// ## Parameters
     /// - `stack_frame`: An address of the stack frame where the access is located.
     fn exp(&self, access: &Self::Access, stack_frame: ir::Expr) -> ir::Expr;
+    
+    fn proc_entry_exit1(&self, body: ir::Statement) -> ir::Statement;
 }
 
 pub trait Access {

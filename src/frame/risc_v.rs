@@ -15,6 +15,7 @@ pub struct RiscVFrame {
 }
 
 static X8: Lazy<Temp> = Lazy::new(|| Temp::new());
+static A0: Lazy<Temp> = Lazy::new(|| Temp::new());
 
 impl Frame for RiscVFrame {
     type Access = RiscVAccess;
@@ -30,8 +31,12 @@ impl Frame for RiscVFrame {
         frame
     }
 
-    fn fp() -> &'static Temp {
+    fn frame_pointer() -> &'static Temp {
         &X8
+    }
+    
+    fn return_value_location() -> &'static Temp {
+        &A0
     }
 
     fn name(&self) -> Label {
@@ -71,6 +76,10 @@ impl Frame for RiscVFrame {
                 Expr::mem(Expr::sum(stack_frame, Expr::Const(**offset)))
             }
         }
+    }
+
+    fn proc_entry_exit1(&self, body: crate::ir::Statement) -> crate::ir::Statement {
+        todo!()
     }
 }
 
