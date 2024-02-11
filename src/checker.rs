@@ -2,18 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::translate::string_literal;
-
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
-use super::translate::{
-    self, alloc_local, array_init, assignment, binary_operator, error, field_access, for_loop,
-    function_call, if_then, if_then_else, let_expression, literal_number, negation, nil, sequence,
-    simple_var, unit, variable_initialization, while_loop, Access, Fragment, Level,
-};
+use super::translate::{self, *};
 use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
     ast,
@@ -1051,9 +1045,8 @@ impl From<&ast::Id> for Symbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::*, frame::RiscVFrame as Frame, types, Span, Spanned};
-
     use super::*;
+    use crate::{ast::Expr, ast::*, frame::RiscVFrame as Frame, types, Span, Spanned};
 
     #[test]
     fn valid_variable() {
