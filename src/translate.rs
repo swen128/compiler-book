@@ -405,10 +405,9 @@ fn boolean_or_operator(left: Expr, right: Expr) -> Expr {
     ))
 }
 
-pub fn while_loop(cond: Expr, body: Expr) -> Expr {
+pub fn while_loop(cond: Expr, body: Expr, done_label: Label) -> Expr {
     let test_label = Label::new();
     let body_label = Label::new();
-    let done_label = Label::new();
 
     Expr::Nx(ir::Statement::seq(
         ir::Statement::Label(test_label.clone()),
@@ -426,9 +425,10 @@ pub fn while_loop(cond: Expr, body: Expr) -> Expr {
 pub fn for_loop<F: Frame + Clone + PartialEq>(
     level: &mut Level<F>,
     index_access: Access<F>,
-    index_initialization: Expr,
+    lo: Expr,
     hi: Expr,
     body: Expr,
+    done_label: Label,
 ) -> Expr {
     // ```tiger
     // for i := lo to hi do
@@ -467,7 +467,6 @@ pub fn for_loop<F: Frame + Clone + PartialEq>(
     let limit_access = alloc_local(level, false);
     let limit_initialization = variable_initialization(level, &limit_access, hi);
 
-    let done_label = Label::new();
     let loop_label = Label::new();
 
     let initial_check = relation_operator(
@@ -499,6 +498,7 @@ pub fn for_loop<F: Frame + Clone + PartialEq>(
         vec![break_, increment, ir::Statement::jump_to_label(loop_label)],
     );
 
+    let index_initialization = variable_initialization(level, &index_access, lo);
     Expr::Nx(ir::Statement::seq(
         index_initialization.un_nx(),
         vec![
@@ -547,6 +547,10 @@ pub fn function_definition<F: Frame + Clone + PartialEq>(
         body: frame.proc_entry_exit1(body.un_nx()),
         frame,
     }
+}
+
+pub fn break_expression(destination: Label) -> Expr {
+    Expr::Nx(ir::Statement::jump_to_label(destination))
 }
 
 pub fn error() -> Expr {

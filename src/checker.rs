@@ -36,8 +36,13 @@ struct Checker<F: Frame + Clone + PartialEq> {
     /// Any method in the `Checker` must push to this vector as it encounters semantic errors in the input program.
     /// Elements in this vector must not be removed or modified.
     errors: Vec<SemanticError>,
+
     id_generator: IdGenerator,
     fragments: Vec<Fragment<F>>,
+    
+    /// The label placed at the end of the nearest loop.
+    /// The `break` expression should jump to this label.
+    nearest_loop: Option<Label>,
 }
 
 impl<F: Frame + Clone + PartialEq> Checker<F> {
@@ -46,6 +51,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             errors: vec![],
             id_generator: IdGenerator::new(),
             fragments: vec![],
+            nearest_loop: None,
         }
     }
 
@@ -72,10 +78,6 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 expr: literal_number(n),
                 ty: types::Ty::Int,
             },
-            ast::Expr::Break => TypedExpr {
-                expr: todo!(),
-                ty: types::Ty::Unit,
-            },
 
             ast::Expr::String(str) => self.trans_string_literal(str),
             ast::Expr::Array(array) => self.trans_array(*array, parent_level, env),
@@ -95,6 +97,20 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             ast::Expr::If(if_) => self.trans_if(*if_, parent_level, env),
             ast::Expr::While(while_) => self.trans_while(*while_, parent_level, env),
             ast::Expr::For(for_) => self.trans_for(*for_, parent_level, env),
+            ast::Expr::Break => self.trans_break(),
+        }
+    }
+
+    fn trans_break(&mut self) -> TypedExpr {
+        TypedExpr {
+            ty: types::Ty::Unit,
+            expr: match self.nearest_loop.clone() {
+                Some(label) => break_expression(label),
+                None => {
+                    self.errors.push(SemanticError::BreakOutsideLoop);
+                    error()
+                }
+            },
         }
     }
 
@@ -115,10 +131,14 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     ) -> TypedExpr {
         let ast::While { cond, body } = while_;
         let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
+
+        let done_label = Label::new();
+        let previous_loop = self.enter_loop(Label::new());
         let body = self.trans_expr(body, parent_level, env);
+        self.leave_loop(previous_loop);
 
         TypedExpr {
-            expr: while_loop(cond.expr, body.expr),
+            expr: while_loop(cond.expr, body.expr, done_label),
             ty: Ty::Unit,
         }
     }
@@ -140,18 +160,27 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         let end = self.trans_specific_type_expr(Ty::Int, iter.end, parent_level, env);
 
         let mut scope = Scope::new(env);
-        let (initialization, access) = declare_variable(
+        let access = declare_variable(
             Symbol::from(id.value),
-            start.expr,
             Ty::Int,
             escape,
             parent_level,
             &mut scope,
         );
+        let done_label = Label::new();
+        let previous_loop = self.enter_loop(done_label.clone());
         let body = self.trans_expr(body, parent_level, &mut scope);
+        self.leave_loop(previous_loop);
 
         TypedExpr {
-            expr: for_loop(parent_level, access, initialization, end.expr, body.expr),
+            expr: for_loop(
+                parent_level,
+                access,
+                start.expr,
+                end.expr,
+                body.expr,
+                done_label,
+            ),
             ty: Ty::Unit,
         }
     }
@@ -614,8 +643,8 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                     (None, rhs_ty) => rhs_ty,
                 };
 
-                let (initialization, _) =
-                    declare_variable(symbol, rhs.expr, ty, escape, parent_level, env);
+                let access = declare_variable(symbol, ty, escape, parent_level, env);
+                let initialization = variable_initialization(&parent_level, &access, rhs.expr);
 
                 Some(initialization)
             }
@@ -712,6 +741,15 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 None
             }
         }
+    }
+
+    /// Enters a new loop, returning the label of the previous loop if present.
+    fn enter_loop(&mut self, label: Label) -> Option<Label> {
+        self.nearest_loop.replace(label)
+    }
+
+    fn leave_loop(&mut self, previous_loop: Option<Label>) {
+        self.nearest_loop = previous_loop;
     }
 }
 
@@ -965,12 +1003,11 @@ fn check_record_fields(
 
 fn declare_variable<F: Frame + Clone + PartialEq>(
     symbol: Symbol,
-    initial_value: translate::Expr,
     ty: types::Ty,
     escape: bool,
     parent_level: &mut Level<F>,
     env: &mut Environment<F>,
-) -> (translate::Expr, Access<F>) {
+) -> Access<F> {
     let access = alloc_local(parent_level, escape);
     let entry = ValueEntry::Variable {
         ty,
@@ -978,9 +1015,7 @@ fn declare_variable<F: Frame + Clone + PartialEq>(
     };
 
     env.values.insert(symbol, entry);
-
-    let initialization = variable_initialization(parent_level, &access, initial_value);
-    (initialization, access)
+    access
 }
 
 #[derive(Error, Debug, Clone, PartialEq)]
@@ -1032,6 +1067,9 @@ pub enum SemanticError {
         found: usize,
         span: Span,
     },
+
+    #[error("Break expression outside of a loop")]
+    BreakOutsideLoop,
 }
 
 impl From<&ast::TypeId> for Symbol {
