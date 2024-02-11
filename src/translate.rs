@@ -95,7 +95,7 @@ impl Expr {
     fn constant(n: i64) -> Self {
         Expr::Ex(ir::Expr::Const(n))
     }
-    
+
     fn jump_to_label(label: Label) -> Self {
         Expr::Nx(ir::Statement::jump_to_label(label))
     }
@@ -151,6 +151,11 @@ impl Condition {
             }
         }
     }
+}
+
+pub enum Fragment<F: Frame + Clone + PartialEq> {
+    Function { body: ir::Statement, frame: F },
+    String(Label, String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -472,12 +477,9 @@ pub fn for_loop<F: Frame + Clone + PartialEq>(
         simple_var(&index_access, level),
         simple_var(&limit_access, level),
     );
-    
-    let break_ = if_then(
-        check_every_loop,
-        Expr::jump_to_label(done_label.clone()),
-    ).un_nx();
-    
+
+    let break_ = if_then(check_every_loop, Expr::jump_to_label(done_label.clone())).un_nx();
+
     let increment = ir::Statement::Move {
         dst: simple_var(&index_access, level).un_ex(),
         src: int_operator(
@@ -490,11 +492,7 @@ pub fn for_loop<F: Frame + Clone + PartialEq>(
 
     let loop_body = ir::Statement::seq(
         body.un_nx(),
-        vec![
-            break_,
-            increment,
-            ir::Statement::jump_to_label(loop_label),
-        ],
+        vec![break_, increment, ir::Statement::jump_to_label(loop_label)],
     );
 
     Expr::Nx(ir::Statement::seq(
@@ -526,6 +524,14 @@ pub fn let_expression(initializations: impl IntoIterator<Item = Expr>, body: Exp
         None => body,
         Some(initialization) => Expr::Ex(ir::Expr::eseq(initialization.un_nx(), body.un_ex())),
     }
+}
+
+pub fn string_literal<F: Frame + Clone + PartialEq>(str: String) -> (Expr, Fragment<F>) {
+    let label = Label::new();
+    (
+        Expr::Ex(ir::Expr::Name(label.clone())),
+        Fragment::String(label, str),
+    )
 }
 
 pub fn error() -> Expr {

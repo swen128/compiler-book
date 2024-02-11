@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::translate::for_loop;
+use crate::translate::string_literal;
 
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
@@ -10,9 +10,9 @@ use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{
-    self, alloc_local, array_init, assignment, binary_operator, error, field_access, function_call,
-    if_then, if_then_else, let_expression, literal_number, negation, nil, sequence, simple_var,
-    unit, variable_initialization, while_loop, Access, Level,
+    self, alloc_local, array_init, assignment, binary_operator, error, field_access, for_loop,
+    function_call, if_then, if_then_else, let_expression, literal_number, negation, nil, sequence,
+    simple_var, unit, variable_initialization, while_loop, Access, Fragment, Level,
 };
 use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
@@ -29,7 +29,7 @@ pub struct TypedExpr {
 pub fn trans_program<F: Frame + Clone + PartialEq>(
     program: ast::Program,
 ) -> (TypedExpr, Vec<SemanticError>) {
-    let mut analyzer = Checker::new();
+    let mut analyzer = Checker::<F>::new();
     let mut env = Environment::<F>::base();
     let mut level = Level::<F>::outermost();
 
@@ -38,22 +38,24 @@ pub fn trans_program<F: Frame + Clone + PartialEq>(
     (typed_expr, analyzer.errors)
 }
 
-struct Checker {
+struct Checker<F: Frame + Clone + PartialEq> {
     /// Any method in the `Checker` must push to this vector as it encounters semantic errors in the input program.
     /// Elements in this vector must not be removed or modified.
     errors: Vec<SemanticError>,
     id_generator: IdGenerator,
+    fragments: Vec<Fragment<F>>,
 }
 
-impl Checker {
+impl<F: Frame + Clone + PartialEq> Checker<F> {
     pub fn new() -> Self {
         Self {
             errors: vec![],
             id_generator: IdGenerator::new(),
+            fragments: vec![],
         }
     }
 
-    pub fn trans_expr<F: Frame + Clone + PartialEq>(
+    pub fn trans_expr(
         &mut self,
         expr: Spanned<ast::Expr>,
         parent_level: &mut Level<F>,
@@ -76,15 +78,12 @@ impl Checker {
                 expr: literal_number(n),
                 ty: types::Ty::Int,
             },
-            ast::Expr::String(_) => TypedExpr {
-                expr: todo!(),
-                ty: types::Ty::String,
-            },
             ast::Expr::Break => TypedExpr {
                 expr: todo!(),
                 ty: types::Ty::Unit,
             },
 
+            ast::Expr::String(str) => self.trans_string_literal(str),
             ast::Expr::Array(array) => self.trans_array(*array, parent_level, env),
             ast::Expr::Record(record) => self.trans_record(record, parent_level, env),
             ast::Expr::Assign(assign) => self.trans_assign(*assign, parent_level, env),
@@ -105,7 +104,16 @@ impl Checker {
         }
     }
 
-    fn trans_while<F: Frame + Clone + PartialEq>(
+    fn trans_string_literal(&mut self, str: String) -> TypedExpr {
+        let (expr, fragment) = string_literal(str);
+        self.fragments.push(fragment);
+        TypedExpr {
+            expr,
+            ty: types::Ty::String,
+        }
+    }
+
+    fn trans_while(
         &mut self,
         while_: ast::While,
         parent_level: &mut Level<F>,
@@ -121,7 +129,7 @@ impl Checker {
         }
     }
 
-    fn trans_for<F: Frame + Clone + PartialEq>(
+    fn trans_for(
         &mut self,
         for_: ast::For,
         parent_level: &mut Level<F>,
@@ -154,7 +162,7 @@ impl Checker {
         }
     }
 
-    fn trans_binary_operator<F: Frame + Clone + PartialEq>(
+    fn trans_binary_operator(
         &mut self,
         op: ast::BiOp,
         left: Spanned<ast::Expr>,
@@ -219,7 +227,7 @@ impl Checker {
         }
     }
 
-    fn trans_if<F: Frame + Clone + PartialEq>(
+    fn trans_if(
         &mut self,
         if_: ast::If,
         parent_level: &mut Level<F>,
@@ -262,7 +270,7 @@ impl Checker {
     }
 
     /// Translates an array expression like `intArray [10] of 0`.
-    fn trans_array<F: Frame + Clone + PartialEq>(
+    fn trans_array(
         &mut self,
         array: ast::Array,
         parent_level: &mut Level<F>,
@@ -305,7 +313,7 @@ impl Checker {
     }
 
     /// Translates a record expression like `point { x = 0, y = 0 }`.
-    fn trans_record<F: Frame + Clone + PartialEq>(
+    fn trans_record(
         &mut self,
         record: ast::Record,
         parent_level: &mut Level<F>,
@@ -372,7 +380,7 @@ impl Checker {
         }
     }
 
-    fn trans_assign<F: Frame + Clone + PartialEq>(
+    fn trans_assign(
         &mut self,
         assign: ast::Assign,
         parent_level: &mut Level<F>,
@@ -401,7 +409,7 @@ impl Checker {
         }
     }
 
-    fn trans_func_call<F: Frame + Clone + PartialEq>(
+    fn trans_func_call(
         &mut self,
         name: Spanned<ast::Id>,
         args: Vec<Spanned<ast::Expr>>,
@@ -442,7 +450,7 @@ impl Checker {
         }
     }
 
-    fn trans_specific_type_expr<F: Frame + Clone + PartialEq>(
+    fn trans_specific_type_expr(
         &mut self,
         expected_ty: types::Ty,
         expr: Spanned<ast::Expr>,
@@ -470,7 +478,7 @@ impl Checker {
         }
     }
 
-    fn trans_var<F: Frame + Clone + PartialEq>(
+    fn trans_var(
         &mut self,
         var: ast::LValue,
         span: Span,
@@ -536,7 +544,7 @@ impl Checker {
         }
     }
 
-    fn trans_seq<F: Frame + Clone + PartialEq>(
+    fn trans_seq(
         &mut self,
         sub_exprs: Vec<Spanned<ast::Expr>>,
         parent_level: &mut Level<F>,
@@ -564,7 +572,7 @@ impl Checker {
         }
     }
 
-    fn trans_let<F: Frame + Clone + PartialEq>(
+    fn trans_let(
         &mut self,
         expr: ast::Let,
         parent_level: &mut Level<F>,
@@ -588,7 +596,7 @@ impl Checker {
 
     /// Type-check the given declaration and add the resulting binding to the environment.
     /// It may also return an initialization expression, which must be evaluated at the beginning of the scope.
-    fn trans_dec<F: Frame + Clone + PartialEq>(
+    fn trans_dec(
         &mut self,
         dec: Spanned<ast::Dec>,
         parent_level: &mut Level<F>,
@@ -680,7 +688,7 @@ impl Checker {
                             .values
                             .insert(symbol, ValueEntry::Variable { ty, access });
                     }
-                    self.trans_expr(*body, parent_level, &mut scope)
+                    self.trans_expr(*body, &mut level, &mut scope)
                 };
 
                 let is_return_type_compatible = declared_return_ty
@@ -699,6 +707,8 @@ impl Checker {
                 env.values
                     .insert(symbol, ValueEntry::func(params_types, return_ty));
 
+                // TODO: Add the function body definition to the fragments.
+
                 None
             }
         }
@@ -711,7 +721,7 @@ impl Checker {
         })
     }
 
-    fn lookup_variable<'a, F: Frame + Clone + PartialEq>(
+    fn lookup_variable<'a>(
         &mut self,
         id: &Spanned<ast::Id>,
         env: &'a ValueTable<F>,
@@ -725,7 +735,7 @@ impl Checker {
         }
     }
 
-    fn lookup_function<'a, F: Frame + Clone + PartialEq>(
+    fn lookup_function<'a>(
         &mut self,
         name: &Spanned<ast::Id>,
         env: &'a Environment<F>,
