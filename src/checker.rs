@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::translate::nil;
+use crate::translate::for_loop;
 
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
@@ -11,7 +11,8 @@ use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{
     self, alloc_local, array_init, assignment, binary_operator, error, field_access, function_call,
-    if_then, if_then_else, literal_number, negation, sequence, simple_var, unit, Access, Level,
+    if_then, if_then_else, let_expression, literal_number, negation, nil, sequence, simple_var,
+    unit, variable_initialization, while_loop, Access, Level,
 };
 use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
 use super::{
@@ -99,8 +100,57 @@ impl Checker {
             }
             ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
             ast::Expr::If(if_) => self.trans_if(*if_, parent_level, env),
-            ast::Expr::While(_) => todo!(),
-            ast::Expr::For(_) => todo!(),
+            ast::Expr::While(while_) => self.trans_while(*while_, parent_level, env),
+            ast::Expr::For(for_) => self.trans_for(*for_, parent_level, env),
+        }
+    }
+
+    fn trans_while<F: Frame + Clone + PartialEq>(
+        &mut self,
+        while_: ast::While,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
+        let ast::While { cond, body } = while_;
+        let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
+        let body = self.trans_expr(body, parent_level, env);
+
+        TypedExpr {
+            expr: while_loop(cond.expr, body.expr),
+            ty: Ty::Unit,
+        }
+    }
+
+    fn trans_for<F: Frame + Clone + PartialEq>(
+        &mut self,
+        for_: ast::For,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
+    ) -> TypedExpr {
+        let ast::For {
+            id,
+            iter,
+            body,
+            escape,
+        } = for_;
+
+        let start = self.trans_specific_type_expr(Ty::Int, iter.start, parent_level, env);
+        let end = self.trans_specific_type_expr(Ty::Int, iter.end, parent_level, env);
+
+        let mut scope = Scope::new(env);
+        let (initialization, access) = declare_variable(
+            Symbol::from(id.value),
+            start.expr,
+            Ty::Int,
+            escape,
+            parent_level,
+            &mut scope,
+        );
+        let body = self.trans_expr(body, parent_level, &mut scope);
+
+        TypedExpr {
+            expr: for_loop(parent_level, access, initialization, end.expr, body.expr),
+            ty: Ty::Unit,
         }
     }
 
@@ -505,7 +555,10 @@ impl Checker {
             },
 
             Some((last, exprs)) => TypedExpr {
-                expr: sequence(exprs, last),
+                expr: sequence(
+                    exprs.into_iter().map(|typed| typed.expr.clone()),
+                    &last.expr,
+                ),
                 ty: last.ty.clone(),
             },
         }
@@ -520,20 +573,27 @@ impl Checker {
         let ast::Let { decs, body } = expr;
         let mut scope = Scope::new(env);
 
-        for dec in decs {
-            self.trans_dec(dec, parent_level, &mut scope);
-        }
+        let initializations: Vec<_> = decs
+            .into_iter()
+            .flat_map(|dec| self.trans_dec(dec, parent_level, &mut scope))
+            .collect();
 
-        self.trans_expr(*body, parent_level, &mut scope)
+        let body = self.trans_expr(*body, parent_level, &mut scope);
+
+        TypedExpr {
+            expr: let_expression(initializations, body.expr),
+            ty: body.ty,
+        }
     }
 
     /// Type-check the given declaration and add the resulting binding to the environment.
+    /// It may also return an initialization expression, which must be evaluated at the beginning of the scope.
     fn trans_dec<F: Frame + Clone + PartialEq>(
         &mut self,
         dec: Spanned<ast::Dec>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
-    ) {
+    ) -> Option<translate::Expr> {
         let span = dec.span;
 
         match dec.value {
@@ -545,6 +605,7 @@ impl Checker {
                     Symbol::from(&id),
                     trans_type(ty, &env.types, &mut self.id_generator),
                 );
+                None
             }
 
             ast::Dec::VarDec(ast::VarDec {
@@ -580,10 +641,10 @@ impl Checker {
                     (None, rhs_ty) => rhs_ty,
                 };
 
-                let access = alloc_local(parent_level, escape);
+                let (initialization, _) =
+                    declare_variable(symbol, rhs.expr, ty, escape, parent_level, env);
 
-                env.values
-                    .insert(symbol, ValueEntry::Variable { ty, access });
+                Some(initialization)
             }
 
             ast::Dec::FnDec(ast::FnDec {
@@ -637,6 +698,8 @@ impl Checker {
                 let return_ty = declared_return_ty.unwrap_or(typed_body.ty);
                 env.values
                     .insert(symbol, ValueEntry::func(params_types, return_ty));
+
+                None
             }
         }
     }
@@ -891,6 +954,26 @@ fn check_record_fields(
     }
 
     errors
+}
+
+fn declare_variable<F: Frame + Clone + PartialEq>(
+    symbol: Symbol,
+    initial_value: translate::Expr,
+    ty: types::Ty,
+    escape: bool,
+    parent_level: &mut Level<F>,
+    env: &mut Environment<F>,
+) -> (translate::Expr, Access<F>) {
+    let access = alloc_local(parent_level, escape);
+    let entry = ValueEntry::Variable {
+        ty,
+        access: access.clone(),
+    };
+
+    env.values.insert(symbol, entry);
+
+    let initialization = variable_initialization(parent_level, &access, initial_value);
+    (initialization, access)
 }
 
 #[derive(Error, Debug, Clone, PartialEq)]

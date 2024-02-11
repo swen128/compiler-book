@@ -1,8 +1,7 @@
 use super::ast;
-use super::checker::TypedExpr;
 use super::frame::{Byte, Frame};
 use super::ir::{self, Statement};
-use super::temp::Label;
+use super::temp::{Label, Temp};
 
 const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
 
@@ -30,7 +29,7 @@ impl Expr {
     const TRUE: Self = Self::Ex(ir::Expr::TRUE);
     const FALSE: Self = Self::Ex(ir::Expr::FALSE);
 
-    pub fn un_ex(self) -> ir::Expr {
+    fn un_ex(self) -> ir::Expr {
         match self {
             Expr::Ex(expr) => expr,
             Expr::Nx(statement) => ir::Expr::eseq(statement, ir::Expr::Const(0)),
@@ -95,6 +94,10 @@ impl Expr {
 
     fn constant(n: i64) -> Self {
         Expr::Ex(ir::Expr::Const(n))
+    }
+    
+    fn jump_to_label(label: Label) -> Self {
+        Expr::Nx(ir::Statement::jump_to_label(label))
     }
 }
 
@@ -179,6 +182,7 @@ impl<F: Frame + Clone + PartialEq> Level<F> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct Access<F: Frame + Clone + PartialEq> {
     level: Level<F>,
     frame: F::Access,
@@ -243,17 +247,39 @@ pub fn negation(expr: Expr) -> Expr {
     Expr::Ex(ir::Expr::sub(ir::Expr::Const(0), expr.un_ex()))
 }
 
-pub fn sequence(exprs: &[TypedExpr], last: &TypedExpr) -> Expr {
-    exprs.into_iter().rfold(last.expr.clone(), |acc, expr| {
+pub fn sequence(exprs: impl DoubleEndedIterator<Item = Expr>, last: &Expr) -> Expr {
+    exprs.rfold(last.clone(), |acc, expr| {
         Expr::Ex(ir::Expr::eseq(
-            Statement::Exp(expr.expr.clone().un_ex()),
+            Statement::Exp(expr.clone().un_ex()),
             acc.un_ex(),
+        ))
+    })
+}
+
+fn statements(mut exprs: impl Iterator<Item = Expr>) -> Option<Expr> {
+    exprs.next().map(|first| {
+        Expr::Nx(Statement::seq(
+            first.un_nx(),
+            exprs.map(Expr::un_nx).collect(),
         ))
     })
 }
 
 pub fn array_init(size: Expr, init: Expr) -> Expr {
     todo!()
+}
+
+pub fn variable_initialization<F: Frame + Clone + PartialEq>(
+    level: &Level<F>,
+    variable_access: &Access<F>,
+    value: Expr,
+) -> Expr {
+    let frame_pointer = ir::Expr::Temp(F::fp().clone());
+
+    Expr::Nx(ir::Statement::Move {
+        dst: level.frame.exp(&variable_access.frame, frame_pointer),
+        src: value.un_ex(),
+    })
 }
 
 pub fn assignment(dst: Expr, src: Expr) -> Expr {
@@ -279,10 +305,10 @@ pub fn if_then(cond: Expr, then: Expr) -> Expr {
 }
 
 pub fn if_then_else(cond: Expr, then: Expr, else_: Expr) -> Expr {
-    Expr::Ex(if_then_else_(cond.un_cx(), then.un_ex(), else_.un_ex()))
+    Expr::Ex(if_then_else_expr(cond.un_cx(), then.un_ex(), else_.un_ex()))
 }
 
-fn if_then_else_(cond: Condition, then: ir::Expr, else_: ir::Expr) -> ir::Expr {
+fn if_then_else_expr(cond: Condition, then: ir::Expr, else_: ir::Expr) -> ir::Expr {
     let tmp = ir::Expr::new_temp();
 
     let true_label = Label::new();
@@ -308,6 +334,24 @@ fn if_then_else_(cond: Condition, then: ir::Expr, else_: ir::Expr) -> ir::Expr {
             ],
         ),
         tmp,
+    )
+}
+
+fn if_then_else_unit(cond: Condition, then: ir::Statement, else_: ir::Statement) -> ir::Statement {
+    let true_label = Label::new();
+    let false_label = Label::new();
+    let done_label = Label::new();
+
+    ir::Statement::seq(
+        cond.build_statement(true_label.clone(), false_label.clone()),
+        vec![
+            ir::Statement::Label(true_label),
+            then,
+            ir::Statement::jump_to_label(done_label.clone()),
+            ir::Statement::Label(false_label),
+            else_,
+            ir::Statement::Label(done_label),
+        ],
     )
 }
 
@@ -350,6 +394,138 @@ fn boolean_or_operator(left: Expr, right: Expr) -> Expr {
         Box::new(left.un_cx()),
         Box::new(right.un_cx()),
     ))
+}
+
+pub fn while_loop(cond: Expr, body: Expr) -> Expr {
+    let test_label = Label::new();
+    let body_label = Label::new();
+    let done_label = Label::new();
+
+    Expr::Nx(ir::Statement::seq(
+        ir::Statement::Label(test_label.clone()),
+        vec![
+            cond.un_cx()
+                .build_statement(body_label.clone(), done_label.clone()),
+            ir::Statement::Label(body_label),
+            body.un_nx(),
+            ir::Statement::jump_to_label(test_label),
+            ir::Statement::Label(done_label),
+        ],
+    ))
+}
+
+pub fn for_loop<F: Frame + Clone + PartialEq>(
+    level: &mut Level<F>,
+    index_access: Access<F>,
+    index_initialization: Expr,
+    hi: Expr,
+    body: Expr,
+) -> Expr {
+    // ```tiger
+    // for i := lo to hi do
+    //   body
+    // end
+    // ```
+    //
+    // is roughly equivalent to:
+    //
+    // ```tiger
+    // let
+    //   var i := lo
+    //   var limit := hi      # In order to avoid evaluating `hi` every iteration
+    // in
+    //   while i <= limit do
+    //     (body; i := i + 1)
+    //   end
+    // end
+    // ```
+    //
+    // If, however, `hi` is the maximum integer, `i + 1` will overflow.
+    // The following code mitigates this issue:
+    //
+    // ```tiger
+    // let
+    //   var i := lo
+    //   var limit := hi
+    // in
+    //   if i <= limit then
+    //     while 1 do
+    //       (body; if i = limit then break else i := i + 1)
+    //     end
+    //   end
+    // end
+    // ```
+    let limit_access = alloc_local(level, false);
+    let limit_initialization = variable_initialization(level, &limit_access, hi);
+
+    let done_label = Label::new();
+    let loop_label = Label::new();
+
+    let initial_check = relation_operator(
+        ir::RelOp::Le,
+        simple_var(&index_access, level),
+        simple_var(&limit_access, level),
+    );
+
+    let check_every_loop = relation_operator(
+        ir::RelOp::Ge,
+        simple_var(&index_access, level),
+        simple_var(&limit_access, level),
+    );
+    
+    let break_ = if_then(
+        check_every_loop,
+        Expr::jump_to_label(done_label.clone()),
+    ).un_nx();
+    
+    let increment = ir::Statement::Move {
+        dst: simple_var(&index_access, level).un_ex(),
+        src: int_operator(
+            ir::BinOp::Plus,
+            simple_var(&index_access, level),
+            Expr::constant(1),
+        )
+        .un_ex(),
+    };
+
+    let loop_body = ir::Statement::seq(
+        body.un_nx(),
+        vec![
+            break_,
+            increment,
+            ir::Statement::jump_to_label(loop_label),
+        ],
+    );
+
+    Expr::Nx(ir::Statement::seq(
+        index_initialization.un_nx(),
+        vec![
+            limit_initialization.un_nx(),
+            if_then(
+                initial_check,
+                Expr::Nx(unconditional_loop(Expr::Nx(loop_body))),
+            )
+            .un_nx(),
+            ir::Statement::Label(done_label),
+        ],
+    ))
+}
+
+fn unconditional_loop(body: Expr) -> ir::Statement {
+    let loop_label = Label::new();
+
+    ir::Statement::seq(
+        ir::Statement::Label(loop_label.clone()),
+        vec![body.un_nx(), ir::Statement::jump_to_label(loop_label)],
+    )
+}
+
+pub fn let_expression(initializations: impl IntoIterator<Item = Expr>, body: Expr) -> Expr {
+    let initialization = statements(initializations.into_iter());
+    match initialization {
+        None => body,
+        Some(initialization) => Expr::Ex(ir::Expr::eseq(initialization.un_nx(), body.un_ex())),
+    }
 }
 
 pub fn error() -> Expr {

@@ -19,6 +19,7 @@ pub struct TypeTable {
 
 pub struct ValueTable<F: Frame + Clone + PartialEq> {
     table: SymbolTable<ValueEntry<F>>,
+    next_unique_id: usize,
 }
 
 pub enum ValueEntry<F: Frame + Clone + PartialEq> {
@@ -69,7 +70,10 @@ impl<F: Frame + Clone + PartialEq> ValueTable<F> {
             symbol("print"),
             ValueEntry::func(vec![Ty::String], Ty::Unit),
         );
-        Self { table }
+        Self {
+            table,
+            next_unique_id: 0,
+        }
     }
 
     pub fn get(&self, symbol: &Symbol) -> Option<&ValueEntry<F>> {
@@ -86,6 +90,21 @@ impl<F: Frame + Clone + PartialEq> ValueTable<F> {
 
     pub fn end_scope(&mut self) {
         self.table.end_scope();
+    }
+
+    /// Returns a unique symbol that is not already defined in the table.
+    /// Note: This function is NOT thread-safe.
+    pub fn unique_symbol(&mut self) -> Symbol {
+        let mut symbol;
+        loop {
+            symbol = Symbol::from(format!("_unique_{}", self.next_unique_id));
+
+            if !self.table.has(&symbol) {
+                break symbol;
+            } else {
+                self.next_unique_id += 1;
+            }
+        }
     }
 }
 

@@ -58,6 +58,10 @@ impl<T> SymbolTable<T> {
     pub fn get(&self, symbol: &Symbol) -> Option<&T> {
         self.symbols.get(symbol.name()).and_then(|v| v.last())
     }
+    
+    pub fn has(&self, symbol: &Symbol) -> bool {
+        self.symbols.contains_key(symbol.name())
+    }
 
     pub fn begin_scope(&mut self) {
         self.history.push(vec![]);
