@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use thiserror::Error;
 
@@ -313,59 +313,30 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        // Possible cases:
-        // 1. The given type ID is not defined.
-        // 2. The given type ID is not a record type.
-        // 3. The given type ID is a record type.
-
         let ast::Record { fields, ty } = record;
-        let ty_span = ty.span.clone();
-        let ty = self.lookup_type(ty, &env.types);
 
-        let actual_fields: HashMap<Symbol, Spanned<TypedExpr>> = fields
-            .into_iter()
-            .map(|field| {
-                let key = Symbol::from(field.key.value);
-                let span = field.value.span;
-                let value = self.trans_expr(field.value, parent_level, env);
-                (key, Spanned::new(value, span))
-            })
-            .collect();
-
-        match ty {
-            // The case 3.
-            types::Ty::Record(_, ref expected_fields) => {
-                let errors = check_record_fields(
-                    &actual_fields,
-                    expected_fields,
-                    Spanned::new(ty.clone(), ty_span),
-                    ty_span,
-                );
-
-                if errors.is_empty() {
-                    TypedExpr { expr: todo!(), ty }
-                } else {
-                    self.errors.extend(errors);
-                    TypedExpr {
-                        expr: error(),
-                        ty: types::Ty::Unknown,
+        let ty = Spanned::new(self.lookup_type(ty.clone(), &env.types), ty.span);
+        let fields = Spanned {
+            span: fields.span,
+            value: fields
+                .value
+                .into_iter()
+                .map(|field| {
+                    let symbol = Symbol::from(field.key.value);
+                    let value_span = field.value.span;
+                    let expr = self.trans_expr(field.value, parent_level, env);
+                    TypedField {
+                        key: Spanned::new(symbol, field.key.span),
+                        value: Spanned::new(expr, value_span),
                     }
-                }
-            }
+                })
+                .collect(),
+        };
 
-            // The case 1.
-            types::Ty::Unknown => TypedExpr {
-                expr: error(),
-                ty: types::Ty::Unknown,
-            },
-
-            // The case 2.
-            _ => {
-                self.errors.push(SemanticError::UnexpectedNonRecord {
-                    found: ty,
-                    span: ty_span,
-                });
-
+        match check_record_type(fields, &ty) {
+            Ok(expr) => TypedExpr { expr, ty: ty.value },
+            Err(errors) => {
+                self.errors.extend(errors);
                 TypedExpr {
                     expr: error(),
                     ty: types::Ty::Unknown,
@@ -908,24 +879,58 @@ fn check_function_arg_types(
     errors
 }
 
+struct TypedField {
+    key: Spanned<Symbol>,
+    value: Spanned<TypedExpr>,
+}
+
+fn check_record_type(
+    field_values: Spanned<Vec<TypedField>>,
+    ty: &Spanned<Ty>,
+) -> Result<translate::Expr, Vec<SemanticError>> {
+    match ty.value {
+        types::Ty::Record(_, ref field_types) => check_record_fields(
+            &field_values,
+            field_types,
+            Spanned::new(ty.value.clone(), ty.span),
+        ),
+
+        // The error should have already been reported elsewhere.
+        types::Ty::Unknown => Err(vec![]),
+
+        _ => Err(vec![SemanticError::UnexpectedNonRecord {
+            found: ty.value.clone(),
+            span: ty.span,
+        }]),
+    }
+}
+
 fn check_record_fields(
-    field_values: &HashMap<Symbol, Spanned<TypedExpr>>,
+    field_values: &Spanned<Vec<TypedField>>,
     field_types: &RecordFields,
     record_type: Spanned<types::Ty>,
-    fields_span: Span,
-) -> Vec<SemanticError> {
+) -> Result<translate::Expr, Vec<SemanticError>> {
     // Possible errors:
     // 1. The given record has a field undefined in the record type.
     // 2. The given record has a field with a type different from the record type.
     // 3. The given record is missing a field defined in the record type.
 
     let mut errors = vec![];
-
+    let mut fields = vec![];
     let mut missing_fields: HashSet<Symbol> = field_types.keys().cloned().collect();
 
-    for (key, expr) in field_values {
-        match field_types.get(key) {
-            Some((_, expected_ty)) => {
+    for TypedField { key, value: expr } in &field_values.value {
+        match field_types.get(&key.value) {
+            // The case 1.
+            None => {
+                errors.push(SemanticError::UndefinedField {
+                    ty: record_type.value.clone(),
+                    field: key.value.clone(),
+                    span: key.span.clone(),
+                });
+            }
+
+            Some((i, expected_ty)) => {
                 // The case 2.
                 if !expr.value.ty.is_subtype_of(expected_ty) {
                     errors.push(SemanticError::TypeError {
@@ -935,16 +940,9 @@ fn check_record_fields(
                     });
                 }
 
-                missing_fields.remove(key);
-            }
-
-            // The case 1.
-            None => {
-                errors.push(SemanticError::UndefinedField {
-                    ty: record_type.value.clone(),
-                    field: key.clone(),
-                    span: record_type.span,
-                });
+                // The field is valid.
+                fields.push((i, expr.value.expr.clone()));
+                missing_fields.remove(&key.value);
             }
         }
     }
@@ -953,11 +951,16 @@ fn check_record_fields(
     if !missing_fields.is_empty() {
         errors.push(SemanticError::MissingRecordFields {
             fields: missing_fields.into_iter().collect(),
-            span: fields_span,
+            span: field_values.span,
         });
     }
 
-    errors
+    if errors.is_empty() {
+        fields.sort_by_key(|(i, _)| *i);
+        Ok(record_init(fields.into_iter().map(|(_, expr)| expr)))
+    } else {
+        Err(errors)
+    }
 }
 
 fn declare_variable<F: Frame + Clone + PartialEq>(

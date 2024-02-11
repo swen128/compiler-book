@@ -87,7 +87,8 @@ fn expr_parser<'src>() -> impl Parser<Token<'src>, Spanned<Expr>, Error = ParseE
             .then(
                 record_field
                     .separated_by(just(Token::Comma))
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace))
+                    .map_with_span(Spanned::new),
             )
             .map(|(ty, fields)| Expr::record(ty, fields));
 

@@ -62,7 +62,7 @@ pub struct Array {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
     pub ty: Spanned<TypeId>,
-    pub fields: Vec<RecordField>,
+    pub fields: Spanned<Vec<RecordField>>,
 }
 
 /// An expression of the form: `<key> = <value>`
@@ -230,7 +230,7 @@ impl Expr {
         Expr::Array(Box::new(Array { ty, size, init }))
     }
 
-    pub fn record(ty: Spanned<TypeId>, fields: Vec<RecordField>) -> Self {
+    pub fn record(ty: Spanned<TypeId>, fields: Spanned<Vec<RecordField>>) -> Self {
         Expr::Record(Record { ty, fields })
     }
 

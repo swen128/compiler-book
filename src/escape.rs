@@ -112,7 +112,10 @@ impl EscapeFinder {
                 self.traverse_expr(d, &mut arr.init.value);
             }
             ast::Expr::Record(record) => {
-                let ast::Record { ty: _, fields } = record;
+                let ast::Record {
+                    ty: _,
+                    fields: Spanned { value: fields, .. },
+                } = record;
                 for field in fields {
                     self.traverse_expr(d, &mut field.value.value);
                 }
