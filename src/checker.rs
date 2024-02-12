@@ -1,6 +1,5 @@
-use std::collections::HashSet;
-
-use thiserror::Error;
+mod error;
+mod record;
 
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
@@ -8,16 +7,20 @@ use super::frame::Frame;
 use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{self, *};
-use super::types::{FunctionSignature, IdGenerator, RecordFields, Ty};
+use super::types::{FunctionSignature, IdGenerator, Ty};
 use super::{
     ast,
     env::{Environment, Scope, TypeTable},
     types,
 };
+pub use error::SemanticError;
+use record::*;
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedExpr {
     pub expr: translate::Expr,
     pub ty: types::Ty,
+    pub span: Span,
 }
 
 pub fn trans_program<F: Frame + Clone + PartialEq>(
@@ -39,14 +42,14 @@ struct Checker<F: Frame + Clone + PartialEq> {
 
     id_generator: IdGenerator,
     fragments: Vec<Fragment<F>>,
-    
+
     /// The label placed at the end of the nearest loop.
     /// The `break` expression should jump to this label.
     nearest_loop: Option<Label>,
 }
 
 impl<F: Frame + Clone + PartialEq> Checker<F> {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             errors: vec![],
             id_generator: IdGenerator::new(),
@@ -55,54 +58,80 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         }
     }
 
-    pub fn trans_expr(
+    /// Enters a new loop, returning the label of the previous loop if present.
+    fn enter_loop(&mut self, label: Label) -> Option<Label> {
+        self.nearest_loop.replace(label)
+    }
+
+    fn leave_loop(&mut self, previous_loop: Option<Label>) {
+        self.nearest_loop = previous_loop;
+    }
+
+    fn trans_expr(
         &mut self,
         expr: Spanned<ast::Expr>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
+        let span = expr.span.clone();
+
         match expr.value {
-            ast::Expr::Let(expr) => self.trans_let(expr, parent_level, env),
-            ast::Expr::LValue(var) => self.trans_var(*var, expr.span, parent_level, env),
-            ast::Expr::Seq(exprs) => self.trans_seq(exprs, parent_level, env),
+            ast::Expr::Let(expr) => self.trans_let(Spanned::new(expr, span), parent_level, env),
+            ast::Expr::LValue(var) => self.trans_var(Spanned::new(*var, span), parent_level, env),
+            ast::Expr::Seq(exprs) => self.trans_seq(exprs, span, parent_level, env),
 
             ast::Expr::NoValue => TypedExpr {
                 expr: unit(),
                 ty: types::Ty::Unit,
+                span,
             },
             ast::Expr::Nil => TypedExpr {
                 expr: nil(),
                 ty: types::Ty::Nil,
+                span,
             },
             ast::Expr::Num(n) => TypedExpr {
                 expr: literal_number(n),
                 ty: types::Ty::Int,
+                span,
             },
 
-            ast::Expr::String(str) => self.trans_string_literal(str),
-            ast::Expr::Array(array) => self.trans_array(*array, parent_level, env),
-            ast::Expr::Record(record) => self.trans_record(record, parent_level, env),
-            ast::Expr::Assign(assign) => self.trans_assign(*assign, parent_level, env),
+            ast::Expr::String(str) => self.trans_string_literal(str, span),
+            ast::Expr::Array(array) => {
+                self.trans_array(Spanned::new(*array, span), parent_level, env)
+            }
+            ast::Expr::Record(record) => {
+                self.trans_record(Spanned::new(record, span), parent_level, env)
+            }
+            ast::Expr::Assign(assign) => {
+                self.trans_assign(Spanned::new(*assign, span), parent_level, env)
+            }
             ast::Expr::Neg(arg) => {
                 let arg = self.trans_specific_type_expr(types::Ty::Int, *arg, parent_level, env);
                 TypedExpr {
                     expr: negation(arg.expr),
                     ty: types::Ty::Int,
+                    span,
                 }
             }
             ast::Expr::BiOp(op, left, right) => {
                 self.trans_binary_operator(op.value, *left, *right, parent_level, env)
             }
-            ast::Expr::FuncCall(name, args) => self.trans_func_call(name, args, parent_level, env),
-            ast::Expr::If(if_) => self.trans_if(*if_, parent_level, env),
-            ast::Expr::While(while_) => self.trans_while(*while_, parent_level, env),
-            ast::Expr::For(for_) => self.trans_for(*for_, parent_level, env),
-            ast::Expr::Break => self.trans_break(),
+            ast::Expr::FuncCall(name, args) => {
+                self.trans_func_call(name, args, span, parent_level, env)
+            }
+            ast::Expr::If(if_) => self.trans_if(Spanned::new(*if_, span), parent_level, env),
+            ast::Expr::While(while_) => {
+                self.trans_while(Spanned::new(*while_, span), parent_level, env)
+            }
+            ast::Expr::For(for_) => self.trans_for(Spanned::new(*for_, span), parent_level, env),
+            ast::Expr::Break => self.trans_break(span),
         }
     }
 
-    fn trans_break(&mut self) -> TypedExpr {
+    fn trans_break(&mut self, span: Span) -> TypedExpr {
         TypedExpr {
+            span,
             ty: types::Ty::Unit,
             expr: match self.nearest_loop.clone() {
                 Some(label) => break_expression(label),
@@ -114,22 +143,23 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         }
     }
 
-    fn trans_string_literal(&mut self, str: String) -> TypedExpr {
+    fn trans_string_literal(&mut self, str: String, span: Span) -> TypedExpr {
         let (expr, fragment) = string_literal(str);
         self.fragments.push(fragment);
         TypedExpr {
             expr,
+            span,
             ty: types::Ty::String,
         }
     }
 
     fn trans_while(
         &mut self,
-        while_: ast::While,
+        while_: Spanned<ast::While>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let ast::While { cond, body } = while_;
+        let ast::While { cond, body } = while_.value;
         let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
 
         let done_label = Label::new();
@@ -140,12 +170,13 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         TypedExpr {
             expr: while_loop(cond.expr, body.expr, done_label),
             ty: Ty::Unit,
+            span: while_.span,
         }
     }
 
     fn trans_for(
         &mut self,
-        for_: ast::For,
+        for_: Spanned<ast::For>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
@@ -154,7 +185,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             iter,
             body,
             escape,
-        } = for_;
+        } = for_.value;
 
         let start = self.trans_specific_type_expr(Ty::Int, iter.start, parent_level, env);
         let end = self.trans_specific_type_expr(Ty::Int, iter.end, parent_level, env);
@@ -182,6 +213,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 done_label,
             ),
             ty: Ty::Unit,
+            span: for_.span,
         }
     }
 
@@ -193,75 +225,24 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        use ast::BiOp::*;
-
-        let left_span = left.span.clone();
-        let right_span = right.span.clone();
         let left = self.trans_expr(left, parent_level, env);
         let right = self.trans_expr(right, parent_level, env);
 
-        let is_correct_type = left.ty != types::Ty::Unknown
-            && right.ty != types::Ty::Unknown
-            && match &op {
-                Eq | Neq => {
-                    if left.ty.is_comparable_to(&right.ty) {
-                        true
-                    } else {
-                        self.errors.push(SemanticError::TypeError {
-                            expected: left.ty.clone(),
-                            found: right.ty.clone(),
-                            span: right_span,
-                        });
-                        false
-                    }
-                }
-                Plus | Minus | Mul | Div | Lt | Le | Gt | Ge | And | Or => {
-                    let left_ok = left.ty == types::Ty::Int;
-                    let right_ok = right.ty == types::Ty::Int;
-
-                    if !left_ok {
-                        self.errors.push(SemanticError::TypeError {
-                            expected: types::Ty::Int,
-                            found: left.ty.clone(),
-                            span: left_span,
-                        });
-                    }
-                    if !right_ok {
-                        self.errors.push(SemanticError::TypeError {
-                            expected: types::Ty::Int,
-                            found: right.ty.clone(),
-                            span: right_span,
-                        });
-                    }
-
-                    left_ok && right_ok
-                }
-            };
-
-        let expr = if is_correct_type {
-            binary_operator(op, left.expr, right.expr)
-        } else {
-            error()
-        };
-
-        TypedExpr {
-            expr,
-            ty: types::Ty::Int,
-        }
+        let (expr, errors) = check_binary_operator(op, left, right);
+        self.errors.extend(errors);
+        expr
     }
 
     fn trans_if(
         &mut self,
-        if_: ast::If,
+        if_: Spanned<ast::If>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let ast::If { cond, then, else_ } = if_;
+        let ast::If { cond, then, else_ } = if_.value;
         let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
 
         if let Some(else_) = else_ {
-            let else_span = else_.span.clone();
-
             let then = self.trans_expr(then, parent_level, env);
             let else_ = self.trans_expr(else_, parent_level, env);
             let ty = Ty::common_type(&then.ty, &else_.ty);
@@ -270,16 +251,18 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 Some(ty) => TypedExpr {
                     expr: if_then_else(cond.expr, then.expr, else_.expr),
                     ty,
+                    span: if_.span,
                 },
                 None => {
                     self.errors.push(SemanticError::TypeError {
                         expected: then.ty.clone(),
                         found: else_.ty.clone(),
-                        span: else_span,
+                        span: else_.span,
                     });
                     TypedExpr {
                         expr: error(),
                         ty: Ty::Unknown,
+                        span: if_.span,
                     }
                 }
             }
@@ -288,6 +271,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             TypedExpr {
                 expr: if_then(cond.expr, then.expr),
                 ty: Ty::Unit,
+                span: if_.span,
             }
         }
     }
@@ -295,42 +279,45 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     /// Translates an array expression like `intArray [10] of 0`.
     fn trans_array(
         &mut self,
-        array: ast::Array,
+        array: Spanned<ast::Array>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let init_span = array.init.span.clone();
-        let ty_span = array.ty.span.clone();
+        let ty = self.lookup_type(array.value.ty, &env.types);
 
-        let ty = self.lookup_type(array.ty, &env.types);
+        let size = self.trans_specific_type_expr(Ty::Int, array.value.size, parent_level, env);
+        let init = self.trans_expr(array.value.init, parent_level, env);
 
-        let size = self.trans_specific_type_expr(Ty::Int, array.size, parent_level, env);
-        let init = self.trans_expr(array.init, parent_level, env);
-
-        if let types::Ty::Array(_, ref element_ty) = ty {
+        if let types::Ty::Array(_, ref element_ty) = ty.value {
             let element_ty = element_ty.as_ref();
 
             if init.ty.is_subtype_of(&element_ty) {
                 TypedExpr {
                     expr: array_creation::<F>(size.expr, init.expr),
-                    ty,
+                    ty: ty.value,
+                    span: array.span,
                 }
             } else {
                 self.errors.push(SemanticError::TypeError {
                     expected: element_ty.clone(),
                     found: init.ty,
-                    span: init_span,
+                    span: init.span,
                 });
-                TypedExpr { expr: error(), ty }
+                TypedExpr {
+                    expr: error(),
+                    ty: ty.value,
+                    span: array.span,
+                }
             }
         } else {
             self.errors.push(SemanticError::UnexpectedNonArray {
-                found: ty,
-                span: ty_span,
+                found: ty.value,
+                span: ty.span,
             });
             TypedExpr {
                 expr: error(),
                 ty: types::Ty::Unknown,
+                span: array.span,
             }
         }
     }
@@ -338,26 +325,22 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     /// Translates a record expression like `point { x = 0, y = 0 }`.
     fn trans_record(
         &mut self,
-        record: ast::Record,
+        record: Spanned<ast::Record>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let ast::Record { fields, ty } = record;
+        let ast::Record { fields, ty } = record.value;
 
-        let ty = Spanned::new(self.lookup_type(ty.clone(), &env.types), ty.span);
+        let ty = self.lookup_type(ty.clone(), &env.types);
         let fields = Spanned {
             span: fields.span,
             value: fields
                 .value
                 .into_iter()
                 .map(|field| {
-                    let symbol = Symbol::from(field.key.value);
-                    let value_span = field.value.span;
-                    let expr = self.trans_expr(field.value, parent_level, env);
-                    TypedField {
-                        key: Spanned::new(symbol, field.key.span),
-                        value: Spanned::new(expr, value_span),
-                    }
+                    let key = Spanned::new(Symbol::from(field.key.value), field.key.span);
+                    let value = self.trans_expr(field.value, parent_level, env);
+                    (key, value)
                 })
                 .collect(),
         };
@@ -366,12 +349,14 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             Ok(fields) => TypedExpr {
                 expr: record_creation::<F>(fields),
                 ty: ty.value,
+                span: record.span,
             },
             Err(errors) => {
                 self.errors.extend(errors);
                 TypedExpr {
                     expr: error(),
                     ty: types::Ty::Unknown,
+                    span: record.span,
                 }
             }
         }
@@ -379,29 +364,30 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
 
     fn trans_assign(
         &mut self,
-        assign: ast::Assign,
+        assign: Spanned<ast::Assign>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let ast::Assign { lhs, rhs } = assign;
-        let rhs_span = rhs.span;
-        let lhs = self.trans_var(lhs.value, lhs.span, parent_level, env);
+        let ast::Assign { lhs, rhs } = assign.value;
+        let lhs = self.trans_var(lhs, parent_level, env);
         let rhs = self.trans_expr(rhs, parent_level, env);
 
         if rhs.ty.is_subtype_of(&lhs.ty) {
             TypedExpr {
                 expr: assignment(lhs.expr, rhs.expr),
                 ty: types::Ty::Unit,
+                span: assign.span,
             }
         } else {
             self.errors.push(SemanticError::TypeError {
                 expected: lhs.ty.clone(),
                 found: rhs.ty.clone(),
-                span: rhs_span,
+                span: rhs.span,
             });
             TypedExpr {
                 expr: error(),
                 ty: types::Ty::Unit,
+                span: assign.span,
             }
         }
     }
@@ -410,39 +396,35 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         &mut self,
         name: Spanned<ast::Id>,
         args: Vec<Spanned<ast::Expr>>,
+        span: Span,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
         let args_typed = args
             .into_iter()
-            .map(|arg| {
-                let span = arg.span;
-                Spanned::new(self.trans_expr(arg, parent_level, env), span)
-            })
+            .map(|arg| self.trans_expr(arg, parent_level, env))
             .collect();
 
         let signature = self.lookup_function(&name, env);
 
-        // TODO: We cannot correctly calculate the span of the whole arguments with current AST structure.
-        let whole_args_span = name.span;
-
         match signature {
             Some((FunctionSignature { params, result }, label)) => {
-                let arg_type_errors =
-                    check_function_arg_types(&args_typed, &params, whole_args_span);
+                let arg_type_errors = check_function_arg_types(&args_typed, &params, span);
                 self.errors.extend(arg_type_errors);
 
-                let translated_args = args_typed.into_iter().map(|arg| arg.value.expr);
+                let translated_args = args_typed.into_iter().map(|arg| arg.expr);
 
                 TypedExpr {
                     expr: function_call(label.clone(), translated_args),
                     ty: result.clone(),
+                    span,
                 }
             }
 
             None => TypedExpr {
                 expr: error(),
                 ty: types::Ty::Unknown,
+                span,
             },
         }
     }
@@ -454,35 +436,35 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let span = expr.span;
-        let TypedExpr { ty: found_ty, expr } = self.trans_expr(expr, parent_level, env);
+        let expr = self.trans_expr(expr, parent_level, env);
 
-        if found_ty.is_subtype_of(&expected_ty) {
+        if expr.ty.is_subtype_of(&expected_ty) {
             TypedExpr {
                 ty: expected_ty,
-                expr,
+                ..expr
             }
         } else {
             self.errors.push(SemanticError::TypeError {
                 expected: expected_ty.clone(),
-                found: found_ty,
-                span,
+                found: expr.ty,
+                span: expr.span,
             });
             TypedExpr {
                 expr: error(),
                 ty: expected_ty,
+                span: expr.span,
             }
         }
     }
 
     fn trans_var(
         &mut self,
-        var: ast::LValue,
-        span: Span,
+        var: Spanned<ast::LValue>,
         parent_level: &Level<F>,
         env: &Environment<F>,
     ) -> TypedExpr {
-        match var {
+        let span = var.span;
+        match var.value {
             ast::LValue::Variable(id) => {
                 let result = env.values.get(&Symbol::from(&id)).map_or_else(
                     || {
@@ -495,6 +477,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                         ValueEntry::Variable { ty, access } => Ok(TypedExpr {
                             expr: simple_var(access, parent_level),
                             ty: ty.clone(),
+                            span,
                         }),
                         _ => Err(vec![SemanticError::UnexpectedFunction {
                             name: Symbol::from(&id),
@@ -510,33 +493,25 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                         TypedExpr {
                             expr: error(),
                             ty: types::Ty::Unknown,
+                            span,
                         }
                     }
                 }
             }
 
             ast::LValue::RecordField(lvalue, field) => {
-                let TypedExpr {
-                    expr: record,
-                    ty: record_ty,
-                } = self.trans_var(lvalue.value, lvalue.span, parent_level, env);
+                let lvalue = self.trans_var(*lvalue, parent_level, env);
 
-                let resolved = lookup_field(record_ty, Symbol::from(field.value), span);
-
-                match resolved {
-                    Ok(ResolvedRecordField { index, ty }) => TypedExpr {
-                        expr: field_access(record, index),
-                        ty,
-                    },
-                    Err(err) => {
-                        self.errors.push(err);
-                        TypedExpr {
-                            expr: error(),
-                            ty: types::Ty::Unknown,
-                        }
+                record_field_access(lvalue, field, span).unwrap_or_else(|err| {
+                    self.errors.push(err);
+                    TypedExpr {
+                        expr: error(),
+                        ty: types::Ty::Unknown,
+                        span,
                     }
-                }
+                })
             }
+
             ast::LValue::ArrayIndex(_, _) => todo!(),
         }
     }
@@ -544,19 +519,21 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     fn trans_seq(
         &mut self,
         sub_exprs: Vec<Spanned<ast::Expr>>,
+        span: Span,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let results = sub_exprs
+        let sub_exprs = sub_exprs
             .into_iter()
             .map(|sub_expr| self.trans_expr(sub_expr, parent_level, env))
             .collect::<Vec<_>>();
 
-        match results.split_last() {
+        match sub_exprs.split_last() {
             // `sub_exprs` is empty, return no value.
             None => TypedExpr {
                 expr: unit(),
                 ty: types::Ty::Unit,
+                span,
             },
 
             Some((last, exprs)) => TypedExpr {
@@ -565,19 +542,22 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                     &last.expr,
                 ),
                 ty: last.ty.clone(),
+                span,
             },
         }
     }
 
     fn trans_let(
         &mut self,
-        expr: ast::Let,
+        expr: Spanned<ast::Let>,
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> TypedExpr {
-        let ast::Let { decs, body } = expr;
+        let ast::Let { decs, body } = expr.value;
         let mut scope = Scope::new(env);
 
+        // Translating the declarations mus precede the translation of the body,
+        // as it causes the side effect of adding new bindings to the environment.
         let initializations: Vec<_> = decs
             .into_iter()
             .flat_map(|dec| self.trans_dec(dec, parent_level, &mut scope))
@@ -588,6 +568,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         TypedExpr {
             expr: let_expression(initializations, body.expr),
             ty: body.ty,
+            span: expr.span,
         }
     }
 
@@ -599,71 +580,61 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         parent_level: &mut Level<F>,
         env: &mut Environment<F>,
     ) -> Option<translate::Expr> {
-        let span = dec.span;
-
         match dec.value {
-            ast::Dec::TypeDec(ast::TyDec {
-                id: Spanned { span: _, value: id },
-                ty: Spanned { span: _, value: ty },
-            }) => {
+            ast::Dec::TypeDec(ast::TyDec { id, ty }) => {
                 env.types.insert(
-                    Symbol::from(&id),
-                    trans_type(ty, &env.types, &mut self.id_generator),
+                    Symbol::from(&id.value),
+                    trans_type(ty.value, &env.types, &mut self.id_generator),
                 );
                 None
             }
 
             ast::Dec::VarDec(ast::VarDec {
-                id: Spanned { value: id, .. },
-                ty: declared_ty,
+                id,
+                ty,
                 expr,
                 escape,
             }) => {
-                let symbol = Symbol::from(&id);
-                let declared_ty = declared_ty
+                let symbol = Symbol::from(id.value);
+                let declared_ty = ty
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
-                let rhs_span = expr.span;
                 let rhs = self.trans_expr(*expr, parent_level, env);
 
-                let ty = match (declared_ty, rhs.ty) {
+                let rhs_ty = match (declared_ty, rhs.ty) {
+                    (None, Ty::Nil) => {
+                        self.errors
+                            .push(SemanticError::UntypedNilError { span: rhs.span });
+                        Ty::Unknown
+                    }
+
+                    (None, rhs_ty) => rhs_ty,
+
                     (Some(declared), rhs_ty) => {
                         if !rhs_ty.is_subtype_of(&declared) {
                             self.errors.push(SemanticError::TypeError {
                                 expected: declared.clone(),
                                 found: rhs_ty,
-                                span: rhs_span,
-                            });
+                                span: rhs.span,
+                            })
                         }
                         declared
                     }
-
-                    (None, Ty::Nil) => {
-                        self.errors.push(SemanticError::UntypedNilError { span });
-                        Ty::Unknown
-                    }
-
-                    (None, rhs_ty) => rhs_ty,
                 };
 
-                let access = declare_variable(symbol, ty, escape, parent_level, env);
+                let access = declare_variable(symbol, rhs_ty, escape, parent_level, env);
                 let initialization = variable_initialization(&parent_level, &access, rhs.expr);
 
                 Some(initialization)
             }
 
             ast::Dec::FnDec(ast::FnDec {
-                name:
-                    Spanned {
-                        span: _,
-                        value: name,
-                    },
+                name,
                 params,
                 return_type,
                 body,
             }) => {
-                let symbol = Symbol::from(&name);
-                let body_span = body.span;
+                let symbol = Symbol::from(name.value);
                 let declared_return_ty = return_type
                     .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
                     .cloned();
@@ -675,7 +646,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                     Label::new(),
                     params.iter().map(|(_, _, escape)| *escape).collect(),
                 );
-                let typed_body = {
+                let body = {
                     let mut scope = Scope::new(env);
                     for (symbol, ty, escape) in params {
                         let access = alloc_local(&mut level, escape);
@@ -688,22 +659,22 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 };
 
                 let is_return_type_compatible = declared_return_ty
-                    .clone()
-                    .map_or(true, |ty| typed_body.ty.is_subtype_of(&ty));
+                    .as_ref()
+                    .map_or(true, |ty| body.ty.is_subtype_of(ty));
 
                 if !is_return_type_compatible {
                     self.errors.push(SemanticError::TypeError {
                         expected: declared_return_ty.clone().unwrap(),
-                        found: typed_body.ty.clone(),
-                        span: body_span,
+                        found: body.ty.clone(),
+                        span: body.span,
                     });
                 }
 
-                let return_ty = declared_return_ty.unwrap_or(typed_body.ty);
+                let return_ty = declared_return_ty.unwrap_or(body.ty);
                 env.values
                     .insert(symbol, ValueEntry::func(params_types, return_ty));
 
-                let fragment = function_definition(&mut level, typed_body.expr);
+                let fragment = function_definition(&mut level, body.expr);
                 self.fragments.push(fragment);
 
                 None
@@ -711,10 +682,15 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         }
     }
 
-    fn lookup_type(&mut self, type_id: Spanned<ast::TypeId>, env: &TypeTable) -> types::Ty {
-        lookup_type(&type_id, &env).unwrap_or_else(|err| {
+    fn lookup_type(
+        &mut self,
+        type_id: Spanned<ast::TypeId>,
+        env: &TypeTable,
+    ) -> Spanned<types::Ty> {
+        let span = type_id.span;
+        lookup_type(type_id, &env).unwrap_or_else(|err| {
             self.errors.push(err);
-            types::Ty::Unknown
+            Spanned::new(types::Ty::Unknown, span)
         })
     }
 
@@ -744,39 +720,6 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 None
             }
         }
-    }
-
-    /// Enters a new loop, returning the label of the previous loop if present.
-    fn enter_loop(&mut self, label: Label) -> Option<Label> {
-        self.nearest_loop.replace(label)
-    }
-
-    fn leave_loop(&mut self, previous_loop: Option<Label>) {
-        self.nearest_loop = previous_loop;
-    }
-}
-
-struct ResolvedRecordField {
-    index: usize,
-    ty: Ty,
-}
-
-/// Tries to find the type of the given field in the given type.
-fn lookup_field(
-    ty: types::Ty,
-    field: Symbol,
-    span: Span,
-) -> Result<ResolvedRecordField, SemanticError> {
-    match ty {
-        types::Ty::Record(_, ref fields) => fields
-            .get(&field)
-            .map(|(i, ty)| ResolvedRecordField {
-                index: *i,
-                ty: ty.clone(),
-            })
-            .ok_or_else(|| SemanticError::UndefinedField { ty, field, span }),
-
-        _ => Err(SemanticError::UndefinedField { ty, field, span }),
     }
 }
 
@@ -822,12 +765,13 @@ fn lookup_function<'a, F: Frame + Clone + PartialEq>(
 }
 
 fn lookup_type(
-    type_id: &Spanned<ast::TypeId>,
+    type_id: Spanned<ast::TypeId>,
     env: &TypeTable,
-) -> Result<types::Ty, SemanticError> {
+) -> Result<Spanned<types::Ty>, SemanticError> {
     let symbol = Symbol::from(&type_id.value);
     env.get(&symbol)
         .cloned()
+        .map(|ty| Spanned::new(ty, type_id.span))
         .ok_or_else(|| SemanticError::UndefinedType {
             name: symbol,
             span: type_id.span,
@@ -891,7 +835,7 @@ fn trans_type_name(id: ast::TypeId, env: &TypeTable) -> types::Ty {
 }
 
 fn check_function_arg_types(
-    args: &Vec<Spanned<TypedExpr>>,
+    args: &Vec<TypedExpr>,
     param_types: &Vec<Ty>,
     whole_args_span: Span,
 ) -> Vec<SemanticError> {
@@ -906,7 +850,7 @@ fn check_function_arg_types(
     }
 
     args.iter()
-        .map(|arg| Spanned::new(arg.value.ty.clone(), arg.span))
+        .map(|arg| Spanned::new(arg.ty.clone(), arg.span))
         .zip(param_types.iter())
         .filter(|(arg, param)| !arg.value.is_subtype_of(param))
         .for_each(|(arg, param)| {
@@ -920,98 +864,66 @@ fn check_function_arg_types(
     errors
 }
 
-struct TypedField {
-    key: Spanned<Symbol>,
-    value: Spanned<TypedExpr>,
-}
+fn check_binary_operator(
+    op: ast::BiOp,
+    left: TypedExpr,
+    right: TypedExpr,
+) -> (TypedExpr, Vec<SemanticError>) {
+    use ast::BiOp::*;
 
-fn check_record_type(
-    field_values: Spanned<Vec<TypedField>>,
-    ty: &Spanned<Ty>,
-) -> Result<Vec<Expr>, Vec<SemanticError>> {
-    match ty.value {
-        types::Ty::Record(_, ref field_types) => check_record_fields(
-            &field_values,
-            field_types,
-            Spanned::new(ty.value.clone(), ty.span),
-        ),
-
-        // The error should have already been reported elsewhere.
-        types::Ty::Unknown => Err(vec![]),
-
-        _ => Err(vec![SemanticError::UnexpectedNonRecord {
-            found: ty.value.clone(),
-            span: ty.span,
-        }]),
-    }
-}
-
-fn check_record_fields(
-    field_values: &Spanned<Vec<TypedField>>,
-    field_types: &RecordFields,
-    record_type: Spanned<types::Ty>,
-) -> Result<Vec<Expr>, Vec<SemanticError>> {
-    // Possible errors:
-    // 1. The given record has a field undefined in the record type.
-    // 2. The given record has a field with a type different from the record type.
-    // 3. The given record is missing a field defined in the record type.
-
-    let mut errors = vec![];
-    let mut fields = vec![];
-    let mut missing_fields: HashSet<Symbol> = field_types.keys().cloned().collect();
-
-    for TypedField { key, value: expr } in &field_values.value {
-        match field_types.get(&key.value) {
-            // The case 1.
-            None => {
-                errors.push(SemanticError::UndefinedField {
-                    ty: record_type.value.clone(),
-                    field: key.value.clone(),
-                    span: key.span.clone(),
-                });
-            }
-
-            Some((i, expected_ty)) => {
-                // The case 2.
-                if !expr.value.ty.is_subtype_of(expected_ty) {
-                    errors.push(SemanticError::TypeError {
-                        expected: expected_ty.clone(),
-                        found: expr.value.ty.clone(),
-                        span: expr.span,
-                    });
-                }
-
-                // The field is valid.
-                fields.push((i, expr.value.expr.clone()));
-                missing_fields.remove(&key.value);
+    let errors = match &op {
+        Eq | Neq => {
+            if left.ty.is_comparable_to(&right.ty) {
+                vec![]
+            } else {
+                vec![SemanticError::TypeError {
+                    expected: left.ty.clone(),
+                    found: right.ty.clone(),
+                    span: right.span,
+                }]
             }
         }
-    }
+        Plus | Minus | Mul | Div | Lt | Le | Gt | Ge | And | Or => {
+            let mut errors = vec![];
+            if !left.ty.is_subtype_of(&Ty::Int) {
+                errors.push(SemanticError::TypeError {
+                    expected: types::Ty::Int,
+                    found: left.ty.clone(),
+                    span: left.span,
+                });
+            }
+            if !right.ty.is_subtype_of(&Ty::Int) {
+                errors.push(SemanticError::TypeError {
+                    expected: types::Ty::Int,
+                    found: right.ty.clone(),
+                    span: right.span,
+                });
+            }
+            errors
+        }
+    };
 
-    // The case 3.
-    if !missing_fields.is_empty() {
-        errors.push(SemanticError::MissingRecordFields {
-            fields: missing_fields.into_iter().collect(),
-            span: field_values.span,
-        });
-    }
+    let expr = TypedExpr {
+        ty: types::Ty::Int,
+        span: left.span.merge(&right.span),
+        expr: if errors.is_empty() {
+            binary_operator(op, left.expr, right.expr)
+        } else {
+            error()
+        },
+    };
 
-    if errors.is_empty() {
-        fields.sort_by_key(|(i, _)| *i);
-        Ok(fields.into_iter().map(|(_, expr)| expr).collect())
-    } else {
-        Err(errors)
-    }
+    (expr, errors)
 }
 
 fn declare_variable<F: Frame + Clone + PartialEq>(
     symbol: Symbol,
     ty: types::Ty,
     escape: bool,
-    parent_level: &mut Level<F>,
+    level: &mut Level<F>,
     env: &mut Environment<F>,
 ) -> Access<F> {
-    let access = alloc_local(parent_level, escape);
+    let access = alloc_local(level, escape);
     let entry = ValueEntry::Variable {
         ty,
         access: access.clone(),
@@ -1019,60 +931,6 @@ fn declare_variable<F: Frame + Clone + PartialEq>(
 
     env.values.insert(symbol, entry);
     access
-}
-
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum SemanticError {
-    #[error("Type mismatch: expected {expected:?}, found {found:?}")]
-    TypeError {
-        expected: types::Ty,
-        found: types::Ty,
-        span: Span,
-    },
-
-    #[error("`nil` must be used in a context where its type can be determined.")]
-    UntypedNilError { span: Span },
-
-    #[error("Undefined type: {name:?}")]
-    UndefinedType { name: Symbol, span: Span },
-
-    #[error("Undefined variable: {name:?}")]
-    UndefinedVariable { name: Symbol, span: Span },
-
-    #[error("Undefined function: {name:?}")]
-    UndefinedFunction { name: Symbol, span: Span },
-
-    #[error("The type '{ty:?}' does not have the field '{field:?}'")]
-    UndefinedField {
-        ty: types::Ty,
-        field: Symbol,
-        span: Span,
-    },
-
-    #[error("Attempted to use a function '{name:?}' as a variable")]
-    UnexpectedFunction { name: Symbol, span: Span },
-
-    #[error("Attempted to call a variable '{name:?}' as a function")]
-    UnexpectedVariable { name: Symbol, span: Span },
-
-    #[error("Expected an array type, found '{found:?}'")]
-    UnexpectedNonArray { found: types::Ty, span: Span },
-
-    #[error("Expected a record type, found '{found:?}'")]
-    UnexpectedNonRecord { found: types::Ty, span: Span },
-
-    #[error("Missing record fields: {fields:?}")]
-    MissingRecordFields { fields: Vec<Symbol>, span: Span },
-
-    #[error("Wrong number of arguments: expected {expected:?}, found {found:?}")]
-    WrongNumberOfArguments {
-        expected: usize,
-        found: usize,
-        span: Span,
-    },
-
-    #[error("Break expression outside of a loop")]
-    BreakOutsideLoop,
 }
 
 impl From<&ast::TypeId> for Symbol {

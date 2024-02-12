@@ -52,7 +52,7 @@ impl Ty {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct RecordFields(HashMap<Symbol, (usize, Ty)>);
+pub struct RecordFields(HashMap<Symbol, RecordField>);
 
 impl RecordFields {
     pub fn new(fields: impl Iterator<Item = (Symbol, Ty)>) -> Self {
@@ -61,13 +61,17 @@ impl RecordFields {
         let mut i = 0;
 
         for (key, value) in fields {
+            let field = RecordField {
+                index: i,
+                ty: value,
+            };
             match map.get(&key) {
                 Some(_) => {
                     // Duplicate keys are overwritten by the last one.
-                    map.insert(key, (i, value));
+                    map.insert(key, field);
                 }
                 None => {
-                    map.insert(key, (i, value));
+                    map.insert(key, field);
                     i += 1;
                 }
             }
@@ -76,13 +80,19 @@ impl RecordFields {
         Self(map)
     }
 
-    pub fn get(&self, key: &Symbol) -> Option<&(usize, Ty)> {
+    pub fn get(&self, key: &Symbol) -> Option<&RecordField> {
         self.0.get(key)
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &Symbol> {
         self.0.keys()
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct RecordField {
+    pub index: usize,
+    pub ty: Ty,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

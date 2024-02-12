@@ -1,3 +1,10 @@
+mod expr;
+mod level;
+
+pub use expr::Expr;
+use expr::*;
+pub use level::*;
+
 use super::ast;
 use super::frame::{Byte, Frame};
 use super::ir::{self, Statement};
@@ -6,204 +13,9 @@ use super::temp::{Label, Temp};
 const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
 const RECORD_ELEMENT_SIZE: Byte = Byte(8);
 
-impl ir::Expr {
-    const TRUE: Self = Self::Const(1);
-    const FALSE: Self = Self::Const(0);
-
-    fn is_truthy(self) -> Condition {
-        Condition::Binary(ir::RelOp::Ne, self, Self::FALSE)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
-    Ex(ir::Expr),
-    Nx(ir::Statement),
-
-    // The Tiger book defines `Cx` using closure of type `(Label, Label) -> Statement`,
-    // but naively translating that to Rust would cause troubles,
-    // especially because the type `Box<dyn FnOnce(Label, Label) -> Statement>` is not clonable.
-    Cx(Condition),
-}
-
-impl Expr {
-    const TRUE: Self = Self::Ex(ir::Expr::TRUE);
-    const FALSE: Self = Self::Ex(ir::Expr::FALSE);
-
-    fn un_ex(self) -> ir::Expr {
-        match self {
-            Expr::Ex(expr) => expr,
-            Expr::Nx(statement) => ir::Expr::eseq(statement, ir::Expr::Const(0)),
-
-            // Returns 1 if the condition is true, 0 otherwise.
-            Expr::Cx(condition) => {
-                let tmp = ir::Expr::new_temp();
-
-                let true_label = Label::new();
-                let false_label = Label::new();
-
-                ir::Expr::eseq(
-                    ir::Statement::seq(
-                        ir::Statement::Move {
-                            dst: tmp.clone(),
-                            src: ir::Expr::TRUE,
-                        },
-                        vec![
-                            condition.build_statement(true_label.clone(), false_label.clone()),
-                            ir::Statement::Label(false_label),
-                            ir::Statement::Move {
-                                dst: tmp.clone(),
-                                src: ir::Expr::FALSE,
-                            },
-                            ir::Statement::Label(true_label),
-                        ],
-                    ),
-                    tmp,
-                )
-            }
-        }
-    }
-
-    fn un_nx(self) -> ir::Statement {
-        match self {
-            Expr::Ex(expr) => ir::Statement::Exp(expr),
-            Expr::Nx(statement) => statement,
-
-            // Just evaluates the condition.
-            Expr::Cx(condition) => {
-                let true_label = Label::new();
-                let false_label = Label::new();
-
-                ir::Statement::seq(
-                    condition.build_statement(true_label.clone(), false_label.clone()),
-                    vec![
-                        ir::Statement::Label(false_label),
-                        ir::Statement::Label(true_label),
-                    ],
-                )
-            }
-        }
-    }
-
-    fn un_cx(self) -> Condition {
-        match self {
-            Expr::Ex(e) => e.is_truthy(),
-            Expr::Nx(statement) => Condition::Always(statement),
-            Expr::Cx(f) => f,
-        }
-    }
-
-    fn constant(n: i64) -> Self {
-        Expr::Ex(ir::Expr::Const(n))
-    }
-
-    fn jump_to_label(label: Label) -> Self {
-        Expr::Nx(ir::Statement::jump_to_label(label))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Condition {
-    Binary(ir::RelOp, ir::Expr, ir::Expr),
-    Always(ir::Statement),
-    Never(ir::Statement),
-
-    And(Box<Condition>, Box<Condition>),
-    Or(Box<Condition>, Box<Condition>),
-}
-
-impl Condition {
-    fn build_statement(self, true_label: Label, false_label: Label) -> ir::Statement {
-        match self {
-            Condition::Binary(op, left, right) => ir::Statement::CJump {
-                op,
-                left,
-                right,
-                if_true: true_label,
-                if_false: false_label,
-            },
-            Condition::Always(statement) => {
-                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(true_label)])
-            }
-            Condition::Never(statement) => {
-                ir::Statement::seq(statement, vec![ir::Statement::jump_to_label(false_label)])
-            }
-
-            Condition::And(left, right) => {
-                let mid_label = Label::new();
-                ir::Statement::seq(
-                    left.build_statement(mid_label.clone(), false_label.clone()),
-                    vec![
-                        ir::Statement::Label(mid_label),
-                        right.build_statement(true_label, false_label),
-                    ],
-                )
-            }
-
-            Condition::Or(left, right) => {
-                let mid_label = Label::new();
-                ir::Statement::seq(
-                    left.build_statement(true_label.clone(), mid_label.clone()),
-                    vec![
-                        ir::Statement::Label(mid_label),
-                        right.build_statement(true_label, false_label),
-                    ],
-                )
-            }
-        }
-    }
-}
-
 pub enum Fragment<F: Frame + Clone + PartialEq> {
     Function { body: ir::Statement, frame: F },
     String(Label, String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Level<F: Frame + Clone + PartialEq> {
-    frame: F,
-    parent: Option<Box<Level<F>>>,
-}
-
-/// Represents a static function nesting level.
-impl<F: Frame + Clone + PartialEq> Level<F> {
-    pub fn new(parent: Level<F>, name: Label, mut formals: Vec<bool>) -> Self {
-        formals.push(true); // A static link is added as if it is another formal parameter which escapes.
-
-        Self {
-            frame: F::new(name, formals),
-            parent: Some(Box::new(parent)),
-        }
-    }
-
-    fn static_link(&self) -> F::Access {
-        self.frame.formals().last().unwrap().clone()
-    }
-
-    pub fn outermost() -> Self {
-        Self {
-            frame: F::new(Label::new(), vec![]),
-            parent: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Access<F: Frame + Clone + PartialEq> {
-    level: Level<F>,
-    frame: F::Access,
-}
-
-pub fn formals<F: Frame + Clone + PartialEq>(level: Level<F>) -> Vec<Access<F>> {
-    todo!()
-}
-
-pub fn alloc_local<F: Frame + Clone + PartialEq>(level: &mut Level<F>, escape: bool) -> Access<F> {
-    let frame = level.frame.alloc_local(escape);
-    Access {
-        level: level.clone(),
-        frame,
-    }
 }
 
 pub fn unit() -> Expr {
@@ -212,19 +24,6 @@ pub fn unit() -> Expr {
 
 pub fn nil() -> Expr {
     Expr::Ex(ir::Expr::Const(0))
-}
-
-/// Returns an IR expression representing a variable reference.
-///
-/// ## Parameters
-/// - `access`: An access to the variable.
-/// - `level`: The function nesting level where the variable is used.
-pub fn simple_var<F: Frame + Clone + PartialEq>(access: &Access<F>, level: &Level<F>) -> Expr {
-    Expr::Ex(
-        level
-            .frame
-            .exp(&access.frame, resolve_static_link(level, &access.level)),
-    )
 }
 
 pub fn array_index(array: Expr, index: Expr) -> Expr {
@@ -317,19 +116,6 @@ fn record_initialization(
                 )),
             }),
     )
-}
-
-pub fn variable_initialization<F: Frame + Clone + PartialEq>(
-    level: &Level<F>,
-    variable_access: &Access<F>,
-    value: Expr,
-) -> Expr {
-    let frame_pointer = ir::Expr::Temp(F::frame_pointer().clone());
-
-    Expr::Nx(ir::Statement::Move {
-        dst: level.frame.exp(&variable_access.frame, frame_pointer),
-        src: value.un_ex(),
-    })
 }
 
 pub fn assignment(dst: Expr, src: Expr) -> Expr {
@@ -579,46 +365,10 @@ pub fn string_literal<F: Frame + Clone + PartialEq>(str: String) -> (Expr, Fragm
     )
 }
 
-pub fn function_definition<F: Frame + Clone + PartialEq>(
-    level: &mut Level<F>,
-    body: Expr,
-) -> Fragment<F> {
-    let frame = level.frame.clone();
-    Fragment::Function {
-        body: frame.proc_entry_exit1(body.un_nx()),
-        frame,
-    }
-}
-
 pub fn break_expression(destination: Label) -> Expr {
     Expr::Nx(ir::Statement::jump_to_label(destination))
 }
 
 pub fn error() -> Expr {
     Expr::Ex(ir::Expr::Error)
-}
-
-fn resolve_static_link<F: Frame + Clone + PartialEq>(
-    level_referenced: &Level<F>,
-    level_declared: &Level<F>,
-) -> ir::Expr {
-    // Static links form a kind of linked list in the stack:
-    //
-    // |    ....     | /
-    // | static link | <╮
-    // |   arg n     |  |
-    // |   .....     |  |
-    // |   arg 2     |  |
-    // |   arg 1     | /
-    // | static link |  <- Frame Pointer
-
-    let mut var = ir::Expr::Temp(F::frame_pointer().clone());
-    let mut current_level = level_referenced;
-
-    while current_level != level_declared {
-        var = current_level.frame.exp(&current_level.static_link(), var);
-        current_level = current_level.parent.as_ref().unwrap();
-    }
-
-    var
 }
