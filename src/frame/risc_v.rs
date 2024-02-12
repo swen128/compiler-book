@@ -34,7 +34,7 @@ impl Frame for RiscVFrame {
     fn frame_pointer() -> &'static Temp {
         &X8
     }
-    
+
     fn return_value_location() -> &'static Temp {
         &A0
     }
@@ -79,6 +79,11 @@ impl Frame for RiscVFrame {
     }
 
     fn proc_entry_exit1(&self, body: crate::ir::Statement) -> crate::ir::Statement {
+        todo!()
+    }
+
+    fn external_call(name: &str, args: Vec<crate::ir::Expr>) -> crate::ir::Expr {
+        // Expr::call(Expr::Name(Label::named(name)), args)
         todo!()
     }
 }

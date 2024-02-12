@@ -4,6 +4,7 @@ use super::ir::{self, Statement};
 use super::temp::{Label, Temp};
 
 const ARRAY_ELEMENT_SIZE: Byte = Byte(8);
+const RECORD_ELEMENT_SIZE: Byte = Byte(8);
 
 impl ir::Expr {
     const TRUE: Self = Self::Const(1);
@@ -270,12 +271,52 @@ fn statements(mut exprs: impl Iterator<Item = Expr>) -> Option<Expr> {
     })
 }
 
-pub fn array_init(size: Expr, init: Expr) -> Expr {
-    todo!()
+pub fn array_creation<F: Frame + Clone + PartialEq>(size: Expr, init: Expr) -> Expr {
+    Expr::Ex(F::external_call(
+        "initARray",
+        vec![size.un_ex(), init.un_ex()],
+    ))
 }
 
-pub fn record_init(fields: impl IntoIterator<Item = Expr>) -> Expr {
-    todo!()
+pub fn record_creation<F: Frame + Clone + PartialEq>(
+    fields: impl IntoIterator<Item = Expr, IntoIter = impl ExactSizeIterator<Item = Expr>>,
+) -> Expr {
+    let tmp_address = Temp::new();
+    let allocated_address = ir::Expr::Temp(tmp_address.clone());
+
+    let fields = fields.into_iter();
+    let allocation = ir::Statement::Move {
+        src: memory_allocation::<F>(ir::Expr::Const(*RECORD_ELEMENT_SIZE * fields.len() as i64)),
+        dst: allocated_address.clone(),
+    };
+    let initializaton = record_initialization(tmp_address, fields);
+
+    Expr::Ex(ir::Expr::eseq(
+        ir::Statement::pair(allocation, initializaton),
+        allocated_address,
+    ))
+}
+
+fn memory_allocation<F: Frame + Clone + PartialEq>(byte_size: ir::Expr) -> ir::Expr {
+    F::external_call("malloc", vec![byte_size])
+}
+
+fn record_initialization(
+    starting_address: Temp,
+    elements: impl IntoIterator<Item = Expr>,
+) -> Statement {
+    Statement::optional_seq(
+        elements
+            .into_iter()
+            .enumerate()
+            .map(|(i, elem)| Statement::Move {
+                src: elem.un_ex(),
+                dst: ir::Expr::mem(ir::Expr::sum(
+                    ir::Expr::Temp(starting_address.clone()),
+                    ir::Expr::Const(*RECORD_ELEMENT_SIZE * i as i64),
+                )),
+            }),
+    )
 }
 
 pub fn variable_initialization<F: Frame + Clone + PartialEq>(

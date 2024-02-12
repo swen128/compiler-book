@@ -45,8 +45,10 @@ pub trait Frame {
     /// ## Parameters
     /// - `stack_frame`: An address of the stack frame where the access is located.
     fn exp(&self, access: &Self::Access, stack_frame: ir::Expr) -> ir::Expr;
-    
+
     fn proc_entry_exit1(&self, body: ir::Statement) -> ir::Statement;
+
+    fn external_call(name: &str, args: Vec<ir::Expr>) -> ir::Expr;
 }
 
 pub trait Access {

@@ -312,7 +312,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
 
             if init.ty.is_subtype_of(&element_ty) {
                 TypedExpr {
-                    expr: array_init(size.expr, init.expr),
+                    expr: array_creation::<F>(size.expr, init.expr),
                     ty,
                 }
             } else {
@@ -363,7 +363,10 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         };
 
         match check_record_type(fields, &ty) {
-            Ok(expr) => TypedExpr { expr, ty: ty.value },
+            Ok(fields) => TypedExpr {
+                expr: record_creation::<F>(fields),
+                ty: ty.value,
+            },
             Err(errors) => {
                 self.errors.extend(errors);
                 TypedExpr {
@@ -925,7 +928,7 @@ struct TypedField {
 fn check_record_type(
     field_values: Spanned<Vec<TypedField>>,
     ty: &Spanned<Ty>,
-) -> Result<translate::Expr, Vec<SemanticError>> {
+) -> Result<Vec<Expr>, Vec<SemanticError>> {
     match ty.value {
         types::Ty::Record(_, ref field_types) => check_record_fields(
             &field_values,
@@ -947,7 +950,7 @@ fn check_record_fields(
     field_values: &Spanned<Vec<TypedField>>,
     field_types: &RecordFields,
     record_type: Spanned<types::Ty>,
-) -> Result<translate::Expr, Vec<SemanticError>> {
+) -> Result<Vec<Expr>, Vec<SemanticError>> {
     // Possible errors:
     // 1. The given record has a field undefined in the record type.
     // 2. The given record has a field with a type different from the record type.
@@ -995,7 +998,7 @@ fn check_record_fields(
 
     if errors.is_empty() {
         fields.sort_by_key(|(i, _)| *i);
-        Ok(record_init(fields.into_iter().map(|(_, expr)| expr)))
+        Ok(fields.into_iter().map(|(_, expr)| expr).collect())
     } else {
         Err(errors)
     }

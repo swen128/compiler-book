@@ -20,7 +20,7 @@ pub enum Statement {
         dst: Expr,
     },
     Exp(Expr),
-    
+
     /// Jump to the address of evaluated value of `dst`.
     Jump {
         /// Either a literal label `Expr::Name(Label)`, or an address calculated by arbitrary expression.
@@ -39,7 +39,7 @@ pub enum Statement {
     },
     Seq(Box<Statement>, Box<Statement>),
     Label(Label),
-    
+
     Noop,
 }
 
@@ -100,11 +100,11 @@ impl Expr {
     pub fn eseq(s: Statement, e: Expr) -> Self {
         Expr::ESeq(Box::new(s), Box::new(e))
     }
-    
+
     pub fn binop(op: BinOp, left: Expr, right: Expr) -> Self {
         Expr::BinOp(op, Box::new(left), Box::new(right))
     }
-    
+
     pub fn new_temp() -> Self {
         Expr::Temp(Temp::new())
     }
@@ -115,7 +115,22 @@ impl Statement {
         rest.into_iter()
             .fold(head, |acc, s| Statement::Seq(Box::new(acc), Box::new(s)))
     }
-    
+
+    pub fn optional_seq(mut statements: impl Iterator<Item = Statement>) -> Self {
+        match statements.next() {
+            Some(head) => Self::non_empty_seq(head, statements),
+            None => Statement::Noop,
+        }
+    }
+
+    fn non_empty_seq(head: Statement, rest: impl Iterator<Item = Statement>) -> Self {
+        rest.fold(head, |acc, s| Statement::pair(acc, s))
+    }
+
+    pub fn pair(first: Statement, second: Statement) -> Self {
+        Self::Seq(Box::new(first), Box::new(second))
+    }
+
     pub fn jump_to_label(label: Label) -> Self {
         Statement::Jump {
             dst: Expr::Name(label.clone()),
