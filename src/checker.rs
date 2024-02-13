@@ -133,7 +133,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         let cond = self.trans_specific_type_expr(Ty::Int, cond, parent_level, env);
 
         let done_label = Label::new();
-        let previous_loop = self.enter_loop(Label::new());
+        let previous_loop = self.enter_loop(done_label.clone());
         let body = self.trans_expr(body, parent_level, env);
         self.leave_loop(previous_loop);
 
