@@ -1,5 +1,8 @@
+mod array;
 mod error;
 mod record;
+
+use self::array::array_index_access;
 
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
@@ -460,8 +463,8 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     fn trans_var(
         &mut self,
         var: Spanned<ast::LValue>,
-        parent_level: &Level<F>,
-        env: &Environment<F>,
+        parent_level: &mut Level<F>,
+        env: &mut Environment<F>,
     ) -> TypedExpr {
         let span = var.span;
         match var.value {
@@ -512,7 +515,11 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 })
             }
 
-            ast::LValue::ArrayIndex(_, _) => todo!(),
+            ast::LValue::ArrayIndex(lvalue, index) => {
+                let lvalue = self.trans_var(*lvalue, parent_level, env);
+                let index = self.trans_expr(index, parent_level, env);
+                array_index_access(lvalue, index, span, &mut self.errors)
+            }
         }
     }
 

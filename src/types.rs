@@ -46,6 +46,10 @@ impl Ty {
         }
     }
 
+    pub fn is_array_type(&self) -> bool {
+        matches!(self, Ty::Array(_, _) | Ty::Unknown)
+    }
+
     pub fn is_comparable_to(&self, other: &Self) -> bool {
         self != &Ty::Unknown && other != &Ty::Unknown && Self::common_type(self, other).is_some()
     }
