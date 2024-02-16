@@ -1,6 +1,10 @@
 use thiserror::Error;
 
-use crate::{symbol::Symbol, types::Ty, Span};
+use crate::{
+    ast::{Id, TypeId},
+    types::Ty,
+    Span,
+};
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SemanticError {
@@ -11,22 +15,22 @@ pub enum SemanticError {
     UntypedNilError { span: Span },
 
     #[error("Undefined type: {name:?}")]
-    UndefinedType { name: Symbol, span: Span },
+    UndefinedType { name: TypeId, span: Span },
 
     #[error("Undefined variable: {name:?}")]
-    UndefinedVariable { name: Symbol, span: Span },
+    UndefinedVariable { name: Id, span: Span },
 
     #[error("Undefined function: {name:?}")]
-    UndefinedFunction { name: Symbol, span: Span },
+    UndefinedFunction { name: Id, span: Span },
 
     #[error("The type '{ty:?}' does not have the field '{field:?}'")]
-    UndefinedField { ty: Ty, field: Symbol, span: Span },
+    UndefinedField { ty: Ty, field: Id, span: Span },
 
     #[error("Attempted to use a function '{name:?}' as a variable")]
-    UnexpectedFunction { name: Symbol, span: Span },
+    UnexpectedFunction { name: Id, span: Span },
 
     #[error("Attempted to call a variable '{name:?}' as a function")]
-    UnexpectedVariable { name: Symbol, span: Span },
+    UnexpectedVariable { name: Id, span: Span },
 
     #[error("Expected an array type, found '{found:?}'")]
     UnexpectedNonArray { found: Ty, span: Span },
@@ -35,7 +39,7 @@ pub enum SemanticError {
     UnexpectedNonRecord { found: Ty, span: Span },
 
     #[error("Missing record fields: {fields:?}")]
-    MissingRecordFields { fields: Vec<Symbol>, span: Span },
+    MissingRecordFields { fields: Vec<Id>, span: Span },
 
     #[error("Wrong number of arguments: expected {expected:?}, found {found:?}")]
     WrongNumberOfArguments {
@@ -45,5 +49,5 @@ pub enum SemanticError {
     },
 
     #[error("Break expression outside of a loop")]
-    BreakOutsideLoop,
+    BreakOutsideLoop { span: Span },
 }

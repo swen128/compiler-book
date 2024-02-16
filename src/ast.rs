@@ -166,7 +166,7 @@ pub struct VarDec {
 
 type IdNode = Spanned<Id>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Id(pub String);
 
 impl Deref for Id {
@@ -179,7 +179,7 @@ impl Deref for Id {
 
 type TypeHint = Option<Spanned<TypeId>>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeId(pub String);
 
 impl Deref for TypeId {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::symbol::Symbol;
+use super::ast::{Id, TypeId};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Ty {
@@ -10,7 +10,7 @@ pub enum Ty {
     Array(UniqueId, Box<Ty>),
     Nil,
     Unit,
-    Name(Symbol, Box<Ty>),
+    Name(TypeId, Box<Ty>),
 
     Unknown,
 }
@@ -20,8 +20,12 @@ impl Ty {
         Self::Array(UniqueId::new(), Box::new(element_ty))
     }
 
-    pub fn record(fields: impl Iterator<Item = (Symbol, Ty)>) -> Self {
+    pub fn record(fields: impl Iterator<Item = (Id, Ty)>) -> Self {
         Self::Record(UniqueId::new(), RecordFields::new(fields))
+    }
+
+    pub fn name(name: TypeId, ty: Ty) -> Self {
+        Self::Name(name, Box::new(ty))
     }
 
     pub fn common_type(a: &Self, b: &Self) -> Option<Self> {
@@ -56,10 +60,10 @@ impl Ty {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct RecordFields(HashMap<Symbol, RecordField>);
+pub struct RecordFields(HashMap<Id, RecordField>);
 
 impl RecordFields {
-    pub fn new(fields: impl Iterator<Item = (Symbol, Ty)>) -> Self {
+    pub fn new(fields: impl Iterator<Item = (Id, Ty)>) -> Self {
         let mut map = HashMap::new();
         // The index of unique fields in the record.
         let mut i = 0;
@@ -84,11 +88,11 @@ impl RecordFields {
         Self(map)
     }
 
-    pub fn get(&self, key: &Symbol) -> Option<&RecordField> {
+    pub fn get(&self, key: &Id) -> Option<&RecordField> {
         self.0.get(key)
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &Symbol> {
+    pub fn keys(&self) -> impl Iterator<Item = &Id> {
         self.0.keys()
     }
 }
@@ -145,8 +149,8 @@ mod tests {
     fn test_common_ancestor() {
         let int = Ty::Int;
         let string = Ty::String;
-        let record_a = Ty::record([(symbol("foo"), Ty::Int)].into_iter());
-        let record_b = Ty::record([(symbol("bar"), Ty::Int)].into_iter());
+        let record_a = Ty::record([(Id("foo".to_owned()), Ty::Int)].into_iter());
+        let record_b = Ty::record([(Id("bar".to_owned()), Ty::Int)].into_iter());
         let array_a = Ty::array(Ty::Int);
         let array_b = Ty::array(Ty::String);
         let nil = Ty::Nil;

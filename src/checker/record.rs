@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::{
     ast::Id,
-    symbol::Symbol,
     types::{RecordField, RecordFields, Ty},
     Span, Spanned,
 };
@@ -14,10 +13,9 @@ pub fn record_field_access(
     field: Spanned<Id>,
     span: Span,
 ) -> Result<TypedExpr, SemanticError> {
-    let symbol = Symbol::from(field.value);
     match maybe_record.ty {
         Ty::Record(_, ref fields) => fields
-            .get(&symbol)
+            .get(&field.value)
             .map(|RecordField { index, ty }| TypedExpr {
                 ty: ty.clone(),
                 expr: field_access(maybe_record.expr, *index),
@@ -25,19 +23,19 @@ pub fn record_field_access(
             })
             .ok_or_else(|| SemanticError::UndefinedField {
                 ty: maybe_record.ty,
-                field: symbol,
+                field: field.value,
                 span: field.span,
             }),
 
         _ => Err(SemanticError::UndefinedField {
             ty: maybe_record.ty,
-            field: symbol,
+            field: field.value,
             span: field.span,
         }),
     }
 }
 
-type TypedField = (Spanned<Symbol>, TypedExpr);
+type TypedField = (Spanned<Id>, TypedExpr);
 
 pub fn check_record_type(
     field_values: Spanned<Vec<TypedField>>,
@@ -72,7 +70,7 @@ fn check_record_fields(
 
     let mut errors = vec![];
     let mut fields = vec![];
-    let mut missing_fields: HashSet<Symbol> = field_types.keys().cloned().collect();
+    let mut missing_fields: HashSet<Id> = field_types.keys().cloned().collect();
 
     for (key, expr) in &field_values.value {
         match field_types.get(&key.value) {

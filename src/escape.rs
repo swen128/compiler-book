@@ -2,14 +2,23 @@ use std::collections::HashMap;
 
 use super::{ast, symbol::Symbol, Spanned};
 
+/// Finds all "escaping" variables in the program,
+/// that is, variables used in a deeper scope than they are defined.
+///
+/// This mutates the `escape` fields in the AST in-place.
+pub fn find_escape(program: &mut ast::Program) {
+    let mut escape_finder = EscapeFinder::new();
+    escape_finder.find_escape(program);
+}
+
 type Depth = usize;
 
-pub struct EscapeFinder {
+struct EscapeFinder {
     usage: HashMap<Symbol, Depth>,
 }
 
 impl EscapeFinder {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             usage: HashMap::new(),
         }
@@ -30,11 +39,9 @@ impl EscapeFinder {
         }
     }
 
-    /// Finds all "escaping" variables in the program.
-    /// That is, variables used in a deeper scope than they are defined.
-    ///
-    /// This mutates the `escape` fields in the AST in-place.
-    pub fn find_escape(&mut self, program: &mut ast::Program) {
+    /// Finds all "escaping" variables in the program,
+    /// and mutates the `escape` fields in the AST in-place.
+    fn find_escape(&mut self, program: &mut ast::Program) {
         let ast::Program(expr) = program;
         let depth = 0;
         self.traverse_expr(depth, &mut expr.value);

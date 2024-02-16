@@ -1,4 +1,7 @@
-use crate::temp::Label;
+use crate::{
+    ast::{Id, TypeId},
+    temp::Label,
+};
 
 use super::{
     frame::Frame,
@@ -72,12 +75,12 @@ impl<F: Frame + Clone + PartialEq> ValueTable<F> {
         Self { table }
     }
 
-    pub fn get(&self, symbol: &Symbol) -> Option<&ValueEntry<F>> {
-        self.table.get(symbol)
+    pub fn get(&self, symbol: &Id) -> Option<&ValueEntry<F>> {
+        self.table.get(&Symbol::from(symbol))
     }
 
-    pub fn insert(&mut self, symbol: Symbol, value: ValueEntry<F>) {
-        self.table.insert(symbol, value);
+    pub fn insert(&mut self, id: Id, value: ValueEntry<F>) {
+        self.table.insert(Symbol::from(id), value);
     }
 
     pub fn begin_scope(&mut self) {
@@ -98,12 +101,12 @@ impl TypeTable {
         Self { table }
     }
 
-    pub fn get(&self, symbol: &Symbol) -> Option<&Ty> {
-        self.table.get(symbol)
+    pub fn get(&self, id: &TypeId) -> Option<&Ty> {
+        self.table.get(&Symbol::from(id))
     }
 
-    pub fn insert(&mut self, symbol: Symbol, ty: Ty) {
-        self.table.insert(symbol, ty);
+    pub fn insert(&mut self, id: &TypeId, ty: Ty) {
+        self.table.insert(Symbol::from(id), ty);
     }
 
     pub fn begin_scope(&mut self) {
@@ -141,5 +144,17 @@ impl<'a, F: Frame + Clone + PartialEq> std::ops::Deref for Scope<'a, F> {
 impl<'a, F: Frame + Clone + PartialEq> std::ops::DerefMut for Scope<'a, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0
+    }
+}
+
+impl From<&TypeId> for Symbol {
+    fn from(id: &TypeId) -> Self {
+        Self::from(id.0.as_str())
+    }
+}
+
+impl From<&Id> for Symbol {
+    fn from(id: &Id) -> Self {
+        Self::from(id.0.as_str())
     }
 }

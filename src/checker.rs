@@ -7,7 +7,6 @@ use self::array::array_index_access;
 use super::document::{Span, Spanned};
 use super::env::{ValueEntry, ValueTable};
 use super::frame::Frame;
-use super::symbol::Symbol;
 use super::temp::Label;
 use super::translate::{self, *};
 use super::types::{FunctionSignature, IdGenerator, Ty};
@@ -139,7 +138,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
             expr: match self.nearest_loop.clone() {
                 Some(label) => break_expression(label),
                 None => {
-                    self.errors.push(SemanticError::BreakOutsideLoop);
+                    self.errors.push(SemanticError::BreakOutsideLoop { span });
                     error()
                 }
             },
@@ -194,13 +193,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         let end = self.trans_specific_type_expr(Ty::Int, iter.end, parent_level, env);
 
         let mut scope = Scope::new(env);
-        let access = declare_variable(
-            Symbol::from(id.value),
-            Ty::Int,
-            escape,
-            parent_level,
-            &mut scope,
-        );
+        let access = declare_variable(id.value, Ty::Int, escape, parent_level, &mut scope);
         let done_label = Label::new();
         let previous_loop = self.enter_loop(done_label.clone());
         let body = self.trans_expr(body, parent_level, &mut scope);
@@ -341,7 +334,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 .value
                 .into_iter()
                 .map(|field| {
-                    let key = Spanned::new(Symbol::from(field.key.value), field.key.span);
+                    let key = Spanned::new(field.key.value, field.key.span);
                     let value = self.trans_expr(field.value, parent_level, env);
                     (key, value)
                 })
@@ -468,39 +461,31 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
     ) -> TypedExpr {
         let span = var.span;
         match var.value {
-            ast::LValue::Variable(id) => {
-                let result = env.values.get(&Symbol::from(&id)).map_or_else(
-                    || {
-                        Err(vec![SemanticError::UndefinedVariable {
-                            name: Symbol::from(&id),
-                            span,
-                        }])
-                    },
-                    |entry| match entry {
-                        ValueEntry::Variable { ty, access } => Ok(TypedExpr {
-                            expr: simple_var(access, parent_level),
-                            ty: ty.clone(),
-                            span,
-                        }),
-                        _ => Err(vec![SemanticError::UnexpectedFunction {
-                            name: Symbol::from(&id),
-                            span,
-                        }]),
-                    },
-                );
-
-                match result {
-                    Ok(typed_expr) => typed_expr,
-                    Err(new_errors) => {
-                        self.errors.extend(new_errors);
-                        TypedExpr {
-                            expr: error(),
-                            ty: types::Ty::Unknown,
-                            span,
-                        }
+            ast::LValue::Variable(id) => env
+                .values
+                .get(&id)
+                .ok_or_else(|| SemanticError::UndefinedVariable {
+                    name: id.clone(),
+                    span,
+                })
+                .and_then(|entry| match entry {
+                    ValueEntry::Variable { ty, access } => Ok(TypedExpr {
+                        expr: simple_var(access, parent_level),
+                        ty: ty.clone(),
+                        span,
+                    }),
+                    ValueEntry::Function { .. } => {
+                        Err(SemanticError::UnexpectedFunction { name: id, span })
                     }
-                }
-            }
+                })
+                .unwrap_or_else(|err| {
+                    self.errors.push(err);
+                    TypedExpr {
+                        expr: error(),
+                        ty: types::Ty::Unknown,
+                        span,
+                    }
+                }),
 
             ast::LValue::RecordField(lvalue, field) => {
                 let lvalue = self.trans_var(*lvalue, parent_level, env);
@@ -590,7 +575,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
         match dec.value {
             ast::Dec::TypeDec(ast::TyDec { id, ty }) => {
                 env.types.insert(
-                    Symbol::from(&id.value),
+                    &id.value,
                     trans_type(ty.value, &env.types, &mut self.id_generator),
                 );
                 None
@@ -602,9 +587,8 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 expr,
                 escape,
             }) => {
-                let symbol = Symbol::from(id.value);
                 let declared_ty = ty
-                    .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
+                    .and_then(|type_id| env.types.get(&type_id.value))
                     .cloned();
                 let rhs = self.trans_expr(*expr, parent_level, env);
 
@@ -629,21 +613,20 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                     }
                 };
 
-                let access = declare_variable(symbol, rhs_ty, escape, parent_level, env);
+                let access = declare_variable(id.value, rhs_ty, escape, parent_level, env);
                 let initialization = variable_initialization(&parent_level, &access, rhs.expr);
 
                 Some(initialization)
             }
 
             ast::Dec::FnDec(ast::FnDec {
-                name,
+                name: func_name,
                 params,
                 return_type,
                 body,
             }) => {
-                let symbol = Symbol::from(name.value);
                 let declared_return_ty = return_type
-                    .and_then(|type_id| env.types.get(&Symbol::from(&type_id.value)))
+                    .and_then(|type_id| env.types.get(&type_id.value))
                     .cloned();
                 let params = trans_function_params(params, &env.types, &mut self.errors);
                 let params_types = params.iter().map(|(_, ty, _)| ty.clone()).collect();
@@ -655,12 +638,12 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
                 );
                 let body = {
                     let mut scope = Scope::new(env);
-                    for (symbol, ty, escape) in params {
+                    for (param_name, ty, escape) in params {
                         let access = alloc_local(&mut level, escape);
 
                         scope
                             .values
-                            .insert(symbol, ValueEntry::Variable { ty, access });
+                            .insert(param_name, ValueEntry::Variable { ty, access });
                     }
                     self.trans_expr(*body, &mut level, &mut scope)
                 };
@@ -679,7 +662,7 @@ impl<F: Frame + Clone + PartialEq> Checker<F> {
 
                 let return_ty = declared_return_ty.unwrap_or(body.ty);
                 env.values
-                    .insert(symbol, ValueEntry::func(params_types, return_ty));
+                    .insert(func_name.value, ValueEntry::func(params_types, return_ty));
 
                 let fragment = function_definition(&mut level, body.expr);
                 self.fragments.push(fragment);
@@ -734,18 +717,17 @@ fn lookup_variable<'a, F: Frame + Clone + PartialEq>(
     id: &Spanned<ast::Id>,
     env: &'a ValueTable<F>,
 ) -> Result<(&'a Ty, &'a Access<F>), SemanticError> {
-    let symbol = Symbol::from(&id.value);
-    env.get(&symbol)
+    env.get(&id.value)
         .map(|entry| match entry {
             ValueEntry::Variable { ty, access } => Ok((ty, access)),
             ValueEntry::Function { .. } => Err(SemanticError::UnexpectedFunction {
-                name: symbol.clone(),
+                name: id.value.clone(),
                 span: id.span,
             }),
         })
         .unwrap_or_else(|| {
             Err(SemanticError::UndefinedVariable {
-                name: symbol,
+                name: id.value.clone(),
                 span: id.span,
             })
         })
@@ -756,16 +738,14 @@ fn lookup_function<'a, F: Frame + Clone + PartialEq>(
     name: &Spanned<ast::Id>,
     env: &'a Environment<F>,
 ) -> Result<(&'a FunctionSignature, &'a Label), SemanticError> {
-    let symbol = Symbol::from(&name.value);
-
-    match env.values.get(&symbol) {
+    match env.values.get(&name.value) {
         Some(ValueEntry::Function { signature, label }) => Ok((signature, label)),
         Some(ValueEntry::Variable { .. }) => Err(SemanticError::UnexpectedVariable {
-            name: symbol.clone(),
+            name: name.value.clone(),
             span: name.span,
         }),
         None => Err(SemanticError::UndefinedFunction {
-            name: symbol.clone(),
+            name: name.value.clone(),
             span: name.span,
         }),
     }
@@ -775,12 +755,11 @@ fn lookup_type(
     type_id: Spanned<ast::TypeId>,
     env: &TypeTable,
 ) -> Result<Spanned<types::Ty>, SemanticError> {
-    let symbol = Symbol::from(&type_id.value);
-    env.get(&symbol)
+    env.get(&type_id.value)
         .cloned()
         .map(|ty| Spanned::new(ty, type_id.span))
         .ok_or_else(|| SemanticError::UndefinedType {
-            name: symbol,
+            name: type_id.value.clone(),
             span: type_id.span,
         })
 }
@@ -789,20 +768,20 @@ fn trans_function_params(
     params: Vec<Spanned<ast::TyField>>,
     env: &TypeTable,
     errors: &mut Vec<SemanticError>,
-) -> Vec<(Symbol, types::Ty, bool)> {
+) -> Vec<(ast::Id, types::Ty, bool)> {
     let entries = params
         .into_iter()
         .map(|spanned| spanned.value)
         .map(|param| {
-            let param_name = Symbol::from(&param.key.value);
-            let type_id = Symbol::from(&param.ty.value);
+            let param_name = param.key.value;
+            let type_id = &param.ty.value;
 
-            let ty = env.get(&type_id).cloned().unwrap_or({
+            let ty = env.get(type_id).cloned().unwrap_or({
                 errors.push(SemanticError::UndefinedType {
                     name: type_id.clone(),
                     span: param.ty.span,
                 });
-                types::Ty::Name(type_id, Box::new(types::Ty::Unknown))
+                types::Ty::name(type_id.clone(), types::Ty::Unknown)
             });
 
             (param_name, ty, param.escape)
@@ -817,7 +796,7 @@ fn trans_type(ty: ast::Ty, env: &TypeTable, id_generator: &mut IdGenerator) -> t
         ast::Ty::Name(id) => trans_type_name(id, env),
         ast::Ty::Record(fields) => {
             types::Ty::record(fields.into_iter().map(|Spanned { value: field, .. }| {
-                let key = Symbol::from(&field.key.value);
+                let key = field.key.value;
                 let ty = trans_type_name(field.ty.value, env);
                 (key, ty)
             }))
@@ -833,12 +812,8 @@ fn trans_type(ty: ast::Ty, env: &TypeTable, id_generator: &mut IdGenerator) -> t
 }
 
 fn trans_type_name(id: ast::TypeId, env: &TypeTable) -> types::Ty {
-    let symbol = Symbol::from(&id);
-    let ty = env
-        .get(&symbol)
-        .map(|t| Box::new(t.clone()))
-        .unwrap_or(Box::new(types::Ty::Unknown));
-    types::Ty::Name(symbol, ty)
+    let ty = env.get(&id).cloned().unwrap_or(types::Ty::Unknown);
+    types::Ty::name(id, ty)
 }
 
 fn check_function_arg_types(
@@ -924,7 +899,7 @@ fn check_binary_operator(
 }
 
 fn declare_variable<F: Frame + Clone + PartialEq>(
-    symbol: Symbol,
+    id: ast::Id,
     ty: types::Ty,
     escape: bool,
     level: &mut Level<F>,
@@ -936,20 +911,8 @@ fn declare_variable<F: Frame + Clone + PartialEq>(
         access: access.clone(),
     };
 
-    env.values.insert(symbol, entry);
+    env.values.insert(id, entry);
     access
-}
-
-impl From<&ast::TypeId> for Symbol {
-    fn from(id: &ast::TypeId) -> Self {
-        Self::from(id.0.as_str())
-    }
-}
-
-impl From<&ast::Id> for Symbol {
-    fn from(id: &ast::Id) -> Self {
-        Self::from(id.0.as_str())
-    }
 }
 
 #[cfg(test)]
