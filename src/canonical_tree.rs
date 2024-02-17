@@ -10,7 +10,6 @@ pub enum Expr {
     Temp(Temp),
     BinOp(BinOp, Box<Expr>, Box<Expr>),
     Mem(Box<Expr>),
-    Call { address: Box<Expr>, args: Vec<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +18,13 @@ pub enum Statement {
         src: Expr,
         dst: Dest,
     },
+    
+    Call {
+        func_address: Expr,
+        args: Vec<Expr>,
+        dst: Temp,
+    },
+
     Exp(Expr),
 
     /// Jump to the address of evaluated value of `dst`.
@@ -71,13 +77,6 @@ impl Expr {
 
     pub fn mul(e1: Expr, e2: Expr) -> Self {
         Expr::BinOp(BinOp::Mul, Box::new(e1), Box::new(e2))
-    }
-
-    pub fn call(address: Expr, args: Vec<Expr>) -> Self {
-        Expr::Call {
-            address: Box::new(address),
-            args,
-        }
     }
 
     pub fn binop(op: BinOp, left: Expr, right: Expr) -> Self {

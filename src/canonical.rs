@@ -1,7 +1,7 @@
 use crate::{
     canonical_tree::{self, Dest, ESeq},
     ir::{Expr, Statement},
-    temp::{Label, Temp},
+    temp::{self, Label, Temp},
 };
 
 /// Returns a list of *canonicalized trees*, which are free from `Seq` and `ESeq` nodes.
@@ -51,22 +51,31 @@ fn canonicalize(expr: Expr) -> canonical_tree::ESeq {
         }
 
         Expr::Call { address, args } => {
-            let temp = Expr::new_temp();
+            let ESeq(s1, address) = canonicalize(*address);
+            let (s2, args) = sequence(args.into_iter().map(canonicalize).collect());
 
-            // Succession of two ore more function calls will clobber the same return value register,
-            // leading to a loss of the previous return value.
-            // In order to mitigate this, we replace any occurrence of function call with the following sequence.
-            //
-            // Care must be taken not to pass the `Call` ast directly to `canonicalize`,
-            // as it will cause infinite recursion.
-            let e = Expr::eseq(
-                Statement::Move {
-                    dst: temp.clone(),
-                    src: Expr::call(*address, args),
-                },
-                temp,
-            );
-            canonicalize(e)
+            let temp_dest = Temp::new();
+
+            let s = {
+                let mut s = s1;
+                let temp_func_address = Temp::new();
+
+                s.push(canonical_tree::Statement::Move {
+                    dst: canonical_tree::Dest::Temp(temp_func_address.clone()),
+                    src: address,
+                });
+                s.extend(s2);
+                s.push(canonical_tree::Statement::Call {
+                    dst: temp_dest.clone(),
+                    func_address: canonical_tree::Expr::Temp(temp_func_address.clone()),
+                    args,
+                });
+                s
+            };
+
+            let e = canonical_tree::Expr::Temp(temp_dest);
+
+            canonical_tree::ESeq(s, e)
         }
 
         Expr::Const(n) => canonical_tree::ESeq(vec![], canonical_tree::Expr::Const(n)),
@@ -93,33 +102,6 @@ fn canonicalize(expr: Expr) -> canonical_tree::ESeq {
 
 fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement> {
     match statement {
-        // This case is specially handled in order to prevent infinite recursion.
-        Statement::Move {
-            dst: Expr::Temp(temp_dest),
-            src: Expr::Call { address, args },
-        } => {
-            let ESeq(s1, address) = canonicalize(*address);
-            let (s2, args) = sequence(args.into_iter().map(canonicalize).collect());
-
-            let temp_func_address = Temp::new();
-            let mut s = s1;
-
-            s.push(canonical_tree::Statement::Move {
-                dst: canonical_tree::Dest::Temp(temp_func_address.clone()),
-                src: address,
-            });
-            s.extend(s2);
-            s.push(canonical_tree::Statement::Move {
-                dst: canonical_tree::Dest::Temp(temp_dest),
-                src: canonical_tree::Expr::call(
-                    canonical_tree::Expr::Temp(temp_func_address),
-                    args,
-                ),
-            });
-
-            s
-        }
-
         Statement::Move {
             dst: Expr::Temp(temp),
             src,
