@@ -1,36 +1,19 @@
 use crate::{
-    canonical_tree::{self, Dest, ESeq},
-    ir::{Expr, Statement},
-    temp::{self, Label, Temp},
+    canonical_tree::{Dest, ESeq, Expr, Statement},
+    ir,
+    temp::Temp,
 };
 
-/// Returns a list of *canonicalized trees*, which are free from `Seq` and `ESeq` nodes.
-fn linearize(statement: Statement) -> Vec<Statement> {
-    todo!()
-}
-
-/// Groups the list of canonical trees into a set of *basic blocks*,
-/// which contain no internal jumps or labels.
-fn basic_blocks(statements: Vec<Statement>) -> (Vec<Vec<Statement>>, Label) {
-    todo!()
-}
-
-/// Orders the basic blocks into a list of *traces*,
-/// where every `CJump` is immediately followed by its `false` label.
-fn trace_schedule(blocks: Vec<Vec<Statement>>, done: Label) -> Vec<Statement> {
-    todo!()
-}
-
-fn canonicalize(expr: Expr) -> canonical_tree::ESeq {
+fn canonicalize(expr: ir::Expr) -> ESeq {
     match expr {
-        Expr::BinOp(op, left, right) => {
+        ir::Expr::BinOp(op, left, right) => {
             let ESeq(s1, e1) = canonicalize(*left);
             let ESeq(s2, e2) = canonicalize(*right);
 
             if commutes(&s2, &e1) {
                 let mut s = s1;
                 s.extend(s2);
-                return ESeq(s, canonical_tree::Expr::binop(op, e1, e2));
+                return ESeq(s, Expr::binop(op, e1, e2));
             }
             print!("s2: {:?}, e1: {:?}", s2, e1);
 
@@ -38,19 +21,19 @@ fn canonicalize(expr: Expr) -> canonical_tree::ESeq {
 
             let s = {
                 let mut s = s1;
-                s.push(canonical_tree::Statement::Move {
+                s.push(Statement::Move {
                     dst: Dest::Temp(temp.clone()),
                     src: e1,
                 });
                 s.extend(s2);
                 s
             };
-            let e = canonical_tree::Expr::binop(op, canonical_tree::Expr::Temp(temp), e2);
+            let e = Expr::binop(op, Expr::Temp(temp), e2);
 
-            canonical_tree::ESeq(s, e)
+            ESeq(s, e)
         }
 
-        Expr::Call { address, args } => {
+        ir::Expr::Call { address, args } => {
             let ESeq(s1, address) = canonicalize(*address);
             let (s2, args) = sequence(args.into_iter().map(canonicalize).collect());
 
@@ -60,62 +43,62 @@ fn canonicalize(expr: Expr) -> canonical_tree::ESeq {
                 let mut s = s1;
                 let temp_func_address = Temp::new();
 
-                s.push(canonical_tree::Statement::Move {
-                    dst: canonical_tree::Dest::Temp(temp_func_address.clone()),
+                s.push(Statement::Move {
+                    dst: Dest::Temp(temp_func_address.clone()),
                     src: address,
                 });
                 s.extend(s2);
-                s.push(canonical_tree::Statement::Call {
+                s.push(Statement::Call {
                     dst: temp_dest.clone(),
-                    func_address: canonical_tree::Expr::Temp(temp_func_address.clone()),
+                    func_address: Expr::Temp(temp_func_address.clone()),
                     args,
                 });
                 s
             };
 
-            let e = canonical_tree::Expr::Temp(temp_dest);
+            let e = Expr::Temp(temp_dest);
 
-            canonical_tree::ESeq(s, e)
+            ESeq(s, e)
         }
 
-        Expr::Const(n) => canonical_tree::ESeq(vec![], canonical_tree::Expr::Const(n)),
+        ir::Expr::Const(n) => ESeq(vec![], Expr::Const(n)),
 
-        Expr::Name(label) => canonical_tree::ESeq(vec![], canonical_tree::Expr::Name(label)),
+        ir::Expr::Name(label) => ESeq(vec![], Expr::Name(label)),
 
-        Expr::Temp(temp) => canonical_tree::ESeq(vec![], canonical_tree::Expr::Temp(temp)),
+        ir::Expr::Temp(temp) => ESeq(vec![], Expr::Temp(temp)),
 
-        Expr::Mem(address) => {
+        ir::Expr::Mem(address) => {
             let ESeq(s, e) = canonicalize(*address);
-            canonical_tree::ESeq(s, canonical_tree::Expr::mem(e))
+            ESeq(s, Expr::mem(e))
         }
 
-        Expr::ESeq(s, e) => {
+        ir::Expr::ESeq(s, e) => {
             let mut s1 = canonicalize_statement(*s);
             let ESeq(s2, e) = canonicalize(*e);
             s1.extend(s2);
-            canonical_tree::ESeq(s1, e)
+            ESeq(s1, e)
         }
 
-        Expr::Error => unreachable!("Invalid expression"),
+        ir::Expr::Error => unreachable!("Invalid expression"),
     }
 }
 
-fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement> {
+fn canonicalize_statement(statement: ir::Statement) -> Vec<Statement> {
     match statement {
-        Statement::Move {
-            dst: Expr::Temp(temp),
+        ir::Statement::Move {
+            dst: ir::Expr::Temp(temp),
             src,
         } => {
             let ESeq(mut s, e) = canonicalize(src);
-            s.push(canonical_tree::Statement::Move {
+            s.push(Statement::Move {
                 src: e,
-                dst: canonical_tree::Dest::Temp(temp),
+                dst: Dest::Temp(temp),
             });
             s
         }
 
-        Statement::Move {
-            dst: Expr::Mem(address),
+        ir::Statement::Move {
+            dst: ir::Expr::Mem(address),
             src,
         } => {
             let ESeq(s1, address) = canonicalize(*address);
@@ -125,43 +108,43 @@ fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement
 
             let mut s = s1;
 
-            s.push(canonical_tree::Statement::Move {
-                dst: canonical_tree::Dest::Temp(temp.clone()),
+            s.push(Statement::Move {
+                dst: Dest::Temp(temp.clone()),
                 src: address,
             });
             s.extend(s2);
 
-            let temp_address = canonical_tree::Expr::mem(canonical_tree::Expr::Temp(temp));
+            let temp_address = Expr::mem(Expr::Temp(temp));
 
-            s.push(canonical_tree::Statement::Move {
-                dst: canonical_tree::Dest::Mem(temp_address),
+            s.push(Statement::Move {
+                dst: Dest::Mem(temp_address),
                 src: e,
             });
 
             s
         }
 
-        Statement::Move { .. } => unreachable!("Invalid move statement"),
+        ir::Statement::Move { .. } => unreachable!("Invalid move statement"),
 
-        Statement::Exp(expr) => {
+        ir::Statement::Exp(expr) => {
             let ESeq(mut s, e) = canonicalize(expr);
-            s.push(canonical_tree::Statement::Exp(e));
+            s.push(Statement::Exp(e));
             s
         }
 
-        Statement::Jump {
+        ir::Statement::Jump {
             dst,
             possible_locations,
         } => {
             let ESeq(mut s, e) = canonicalize(dst);
-            s.push(canonical_tree::Statement::Jump {
+            s.push(Statement::Jump {
                 dst: e,
                 possible_locations,
             });
             s
         }
 
-        Statement::CJump {
+        ir::Statement::CJump {
             op,
             left,
             right,
@@ -174,7 +157,7 @@ fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement
             if commutes(&s2, &e1) {
                 let mut s = s1;
                 s.extend(s2);
-                s.push(canonical_tree::Statement::CJump {
+                s.push(Statement::CJump {
                     op,
                     left: e1,
                     right: e2,
@@ -187,14 +170,14 @@ fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement
             let temp = Temp::new();
 
             let mut s = s1;
-            s.push(canonical_tree::Statement::Move {
-                dst: canonical_tree::Dest::Temp(temp.clone()),
+            s.push(Statement::Move {
+                dst: Dest::Temp(temp.clone()),
                 src: e1,
             });
             s.extend(s2);
-            s.push(canonical_tree::Statement::CJump {
+            s.push(Statement::CJump {
                 op,
-                left: canonical_tree::Expr::Temp(temp),
+                left: Expr::Temp(temp),
                 right: e2,
                 if_true,
                 if_false,
@@ -202,33 +185,31 @@ fn canonicalize_statement(statement: Statement) -> Vec<canonical_tree::Statement
             s
         }
 
-        Statement::Seq(s1, s2) => {
+        ir::Statement::Seq(s1, s2) => {
             let mut s1 = canonicalize_statement(*s1);
             let s2 = canonicalize_statement(*s2);
             s1.extend(s2);
             s1
         }
 
-        Statement::Label(label) => vec![canonical_tree::Statement::Label(label)],
+        ir::Statement::Label(label) => vec![Statement::Label(label)],
 
-        Statement::Noop => vec![],
+        ir::Statement::Noop => vec![],
     }
 }
 
-fn sequence(
-    exprs: Vec<canonical_tree::ESeq>,
-) -> (Vec<canonical_tree::Statement>, Vec<canonical_tree::Expr>) {
+fn sequence(exprs: Vec<ESeq>) -> (Vec<Statement>, Vec<Expr>) {
     let mut statements = vec![];
     let mut expressions = vec![];
 
     for ESeq(s, e) in exprs {
         let temp = Temp::new();
         statements.extend(s);
-        statements.push(canonical_tree::Statement::Move {
+        statements.push(Statement::Move {
             dst: Dest::Temp(temp.clone()),
             src: e,
         });
-        expressions.push(canonical_tree::Expr::Temp(temp));
+        expressions.push(Expr::Temp(temp));
     }
 
     (statements, expressions)
@@ -239,10 +220,7 @@ fn sequence(
 ///
 /// This is a conservative approximation,
 /// and may return `false` for commutative statements and expressions.
-fn commutes(statement: &Vec<canonical_tree::Statement>, expression: &canonical_tree::Expr) -> bool {
-    use canonical_tree::Expr;
-    use canonical_tree::Statement;
-
+fn commutes(statement: &Vec<Statement>, expression: &Expr) -> bool {
     matches!(
         (statement.as_slice(), expression),
         (_, Expr::Name(_)) | (_, Expr::Const(_)) | ([Statement::Exp(Expr::Const(_))], _)
@@ -252,8 +230,8 @@ fn commutes(statement: &Vec<canonical_tree::Statement>, expression: &canonical_t
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::*;
-    use canonical_tree::Expr as CExpr;
+    use crate::canonical_tree::Expr as CExpr;
+    use crate::ir::{BinOp, Expr};
 
     #[test]
     fn canonicalize_calls() {

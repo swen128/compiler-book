@@ -18,7 +18,7 @@ pub enum Statement {
         src: Expr,
         dst: Dest,
     },
-    
+
     Call {
         func_address: Expr,
         args: Vec<Expr>,
@@ -67,36 +67,11 @@ impl Expr {
         Expr::Mem(Box::new(e))
     }
 
-    pub fn sum(e1: Expr, e2: Expr) -> Self {
-        Expr::BinOp(BinOp::Plus, Box::new(e1), Box::new(e2))
-    }
-
-    pub fn sub(e1: Expr, e2: Expr) -> Self {
-        Expr::BinOp(BinOp::Minus, Box::new(e1), Box::new(e2))
-    }
-
-    pub fn mul(e1: Expr, e2: Expr) -> Self {
-        Expr::BinOp(BinOp::Mul, Box::new(e1), Box::new(e2))
-    }
-
     pub fn binop(op: BinOp, left: Expr, right: Expr) -> Self {
         Expr::BinOp(op, Box::new(left), Box::new(right))
     }
 
     pub fn new_temp() -> Self {
         Expr::Temp(Temp::new())
-    }
-}
-
-impl Statement {
-    pub fn jump_to_label(label: Label) -> Self {
-        Self::Jump {
-            dst: Expr::Name(label.clone()),
-            possible_locations: vec![label],
-        }
-    }
-
-    pub fn noop() -> Self {
-        Self::Exp(Expr::Const(0))
     }
 }
