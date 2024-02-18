@@ -73,6 +73,24 @@ pub enum RelOp {
     Uge,
 }
 
+impl RelOp {
+    pub fn negate(&self) -> Self {
+        use RelOp::*;
+        match self {
+            Eq => Ne,
+            Ne => Eq,
+            Lt => Ge,
+            Gt => Le,
+            Le => Gt,
+            Ge => Lt,
+            Ult => Uge,
+            Ule => Ugt,
+            Ugt => Ule,
+            Uge => Ult,
+        }
+    }
+}
+
 impl Expr {
     pub fn mem(e: Expr) -> Self {
         Expr::Mem(Box::new(e))

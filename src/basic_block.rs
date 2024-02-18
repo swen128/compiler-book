@@ -8,18 +8,19 @@ use crate::{
 
 /// Part of a program which is considered an atomic unit in the control flow analysis.
 /// It is always entered at the beginning and exited at the end.
+#[derive(Debug, Clone, PartialEq)]
 pub struct BasicBlock {
     /// The entry point of the block.
-    label: Label,
-    statements: Vec<LinearStatement>,
+    pub label: Label,
+    pub statements: Vec<LinearStatement>,
     /// The exit point of the block.
-    jump: Jump,
+    pub jump: Jump,
 }
 
 /// Subset of IR statement types which is irrelevant to control flow analysis,
 /// i.e. conntains no jumps or labels.
 #[derive(Debug, Clone, PartialEq)]
-enum LinearStatement {
+pub enum LinearStatement {
     Move {
         src: Expr,
         dst: Dest,
@@ -35,7 +36,7 @@ enum LinearStatement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Jump {
+pub enum Jump {
     Jump {
         dst: Expr,
         possible_locations: Vec<Label>,
@@ -190,7 +191,7 @@ impl From<Statement> for BasicBlockToken {
 
 impl Jump {
     /// Unconditional jump to the given label.
-    fn single_label(label: Label) -> Self {
+    pub fn single_label(label: Label) -> Self {
         Self::Jump {
             dst: Expr::Name(label.clone()),
             possible_locations: vec![label],

@@ -20,7 +20,7 @@ impl Temp {
 pub struct TempTable {}
 
 /// Represents some machine-language location whose exact address is yet to be determined.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Label(Symbol);
 
 impl Label {
