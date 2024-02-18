@@ -16,6 +16,7 @@ mod translate;
 mod frame;
 mod canonical;
 mod canonical_tree;
+mod basic_block;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);
