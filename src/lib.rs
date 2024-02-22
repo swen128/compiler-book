@@ -18,6 +18,8 @@ mod canonical;
 mod canonical_tree;
 mod basic_block;
 mod trace;
+mod codegen;
+mod assembly;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);

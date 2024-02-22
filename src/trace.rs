@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+pub use crate::canonical_tree::Expr;
 use crate::{
     basic_block::{BasicBlock, Jump, LinearStatement},
-    canonical_tree::{Dest, Expr},
+    canonical_tree::Dest,
     ir::RelOp,
     temp::{Label, Temp},
 };
