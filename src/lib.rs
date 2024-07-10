@@ -20,6 +20,7 @@ mod basic_block;
 mod trace;
 mod codegen;
 mod assembly;
+mod flow;
 
 pub fn parse<'src>(source: &'src str) -> Result<ast::Program, Vec<ParseError<'src>>> {
     let tokens = lexer::tokenize(source);

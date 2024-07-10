@@ -17,7 +17,10 @@ impl Temp {
     }
 }
 
-pub struct TempTable {}
+// TODO: Imlpement this.
+pub struct TempTable<T> {
+    phantom: std::marker::PhantomData<T>,
+}
 
 /// Represents some machine-language location whose exact address is yet to be determined.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
